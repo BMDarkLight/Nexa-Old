@@ -93,7 +93,6 @@ jobs:
           AUTH_SECRET_KEY=${{ secrets.AUTH_SECRET_KEY }}
           AUTH_ALGORITHM=${{ secrets.AUTH_ALGORITHM }}
           AUTH_TOKEN_EXPIRE=${{ secrets.AUTH_TOKEN_EXPIRE }}
-          AUTH_REFRESH_TOKEN_EXPIRE=${{ secrets.AUTH_REFRESH_TOKEN_EXPIRE }}
 
           USE_SMTP=${{ secrets.USE_SMTP }}
           SMTP_SERVER=${{ secrets.SMTP_SERVER }}
