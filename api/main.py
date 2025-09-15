@@ -524,6 +524,15 @@ def invite_signin(
     return {"message": "Invited user signed up successfully."}
 
 # --- User Management Routes ---
+class UserUpdateModel(BaseModel):
+    username : str
+    firstname: Optional[str] = None
+    lastname: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    organization: Optional[str] = None
+    permission: Optional[str] = None
+
 @app.get("/users", response_model=List[dict])
 def list_users(token: str = Depends(oauth2_scheme)):
     if not token:
@@ -570,6 +579,67 @@ def get_user(username: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=403, detail="Permission denied")
     
     return user_data
+
+
+@app.put("/users/{username}")
+def update_user(
+    update: UserUpdateModel,
+    token: str = Depends(oauth2_scheme)
+):
+    username = update.username
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        current_user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+    user_in_db = users_db.find_one({"username": username})
+    if not user_in_db:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if current_user.get("permission") == "sysadmin":
+        allowed_fields = {"firstname", "lastname", "email", "phone", "organization", "permission"}
+    elif current_user["username"] == username:
+        allowed_fields = {"firstname", "lastname", "email", "phone"}
+    else:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    update_data = update.model_dump(exclude_unset=True)
+    update_data = {k: v for k, v in update_data.items() if k in allowed_fields}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No valid update fields provided")
+
+    if "organization" in update_data:
+        org_val = update_data["organization"]
+        if org_val is not None:
+            try:
+                org_obj = ObjectId(org_val)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid organization id format")
+            
+            if not orgs_db.find_one({"_id": org_obj}):
+                raise HTTPException(status_code=404, detail="Organization not found")
+            
+            update_data["organization"] = org_obj
+
+    if "permission" in update_data:
+        if update_data["permission"] not in ["sysadmin", "orgadmin", "orguser"]:
+            raise HTTPException(status_code=400, detail="Invalid permission value")
+
+    update_data["updated_at"] = datetime.datetime.utcnow()
+    result = users_db.update_one({"username": username}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    updated_user = users_db.find_one({"username": username}, {"_id": 0, "password": 0})
+    if updated_user and "organization" in updated_user and isinstance(updated_user["organization"], ObjectId):
+        updated_user["organization"] = str(updated_user["organization"])
+    return {
+        "message": f"User '{username}' updated successfully",
+        "updated_user": updated_user
+    }
 
 @app.delete("/users/{username}")
 def delete_user(username: str, token: str = Depends(oauth2_scheme)):
