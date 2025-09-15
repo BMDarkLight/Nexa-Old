@@ -17,10 +17,16 @@ use_smtp = os.getenv("USE_SMTP", "true").lower() == "true"
 if use_smtp == "true":
     # --- SMTP Configuration ---
     SMTP_SERVER = os.getenv("SMTP_SERVER")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
+    SMTP_PORT = os.getenv("SMTP_PORT", 465)
     SMTP_USERNAME = os.getenv("SMTP_USERNAME")
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
     SMTP_SENDER = os.getenv("SMTP_SENDER")
+
+    if isinstance(SMTP_PORT, str):
+        try:
+            SMTP_PORT = int(SMTP_PORT)
+        except ValueError:
+            raise ValueError(f"Invalid SMTP_PORT value: {SMTP_PORT}. It should be an integer.")
 
     if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER]):
         raise ConnectionError(
