@@ -639,7 +639,7 @@ def create_user(user: UserCreateModel, token: str = Depends(oauth2_scheme)):
             raise HTTPException(status_code=400, detail="Organization name is required for an org user.")
         
         org = orgs_db.find_one({"name": user.organization})
-        
+
         if not org:
             raise HTTPException(status_code=404, detail=f"Organization '{user.organization}' not found.")
         
@@ -740,26 +740,46 @@ def update_user(
         "updated_user": updated_user
     }
 
-@app.delete("/users/{username}")
+@app.delete("/users/{username}", status_code=200)
 def delete_user(username: str, token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated") 
     try:
-        user = verify_token(token)
+        current_user = verify_token(token)
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-    
-    if not (user.get("permission") == "sysadmin" or user["username"] == username):
-        raise HTTPException(status_code=403, detail="Permission denied")
-    
-    if user.get("permission") != "sysadmin" and user.get("organization") != users_db.find_one({"username": username}).get("organization"):
-        raise HTTPException(status_code=403, detail="Permission denied")
-    
-    result = users_db.delete_one({"username": username})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="User not found")
 
-    return {"message": f"User '{username}' deleted successfully"}
+    user_to_delete = users_db.find_one({"username": username})
+
+    if not user_to_delete:
+        raise HTTPException(status_code=404, detail=f"User '{username}' not found.")
+
+    is_sysadmin = current_user.get("permission") == "sysadmin"
+    is_self_delete = current_user.get("username") == user_to_delete.get("username")
+    is_orgadmin_deleting_member = (current_user.get("permission") == "orgadmin" and current_user.get("organization") == user_to_delete.get("organization"))
+
+    if not (is_sysadmin or is_self_delete or is_orgadmin_deleting_member):
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this user.")
+
+    if user_to_delete.get("permission") == "orgadmin":
+        org = orgs_db.find_one({"owner": user_to_delete.get("_id")})
+        if org:
+            raise HTTPException(
+                status_code=409,
+                detail="This user owns an organization and cannot be deleted. Please transfer ownership first."
+            )
+    
+    user_org_id = user_to_delete.get("organization")
+    if user_org_id:
+        orgs_db.update_one(
+            {"_id": user_org_id},
+            {"$pull": {"users": user_to_delete.get("_id")}}
+        )
+
+    result = users_db.delete_one({"_id": user_to_delete.get("_id")})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found, may have been deleted by another process.")
+
+    return {"message": f"User '{username}' deleted."}
 
 # --- Agent Routes ---
 from api.agent import get_agent_components, sessions_db, agents_db, connectors_db
