@@ -65,14 +65,55 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Copy docker compose file to VPS
+
+      - name: Create .env file from secrets
+        run: |
+          cat > .env <<EOF
+          SYSADMIN_USERNAME=${{ secrets.SYSADMIN_USERNAME }}
+          SYSADMIN_PASSWORD=${{ secrets.SYSADMIN_PASSWORD }}
+          SYSADMIN_FIRSTNAME=${{ secrets.SYSADMIN_FIRSTNAME }}
+          SYSADMIN_LASTNAME=${{ secrets.SYSADMIN_LASTNAME }}
+          SYSADMIN_EMAIL=${{ secrets.SYSADMIN_EMAIL }}
+          SYSADMIN_PHONE=${{ secrets.SYSADMIN_PHONE }}
+
+          SERVER_URL=${{ secrets.SERVER_URL }}
+          NEXT_PUBLIC_SERVER_URL=${{ secrets.NEXT_PUBLIC_SERVER_URL }}
+          UI_PORT=${{ secrets.UI_PORT }}
+          API_PORT=${{ secrets.API_PORT }}
+
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+
+          LANGSMITH_TRACING=${{ secrets.LANGSMITH_TRACING }}
+          LANGSMITH_ENDPOINT=${{ secrets.LANGSMITH_ENDPOINT }}
+          LANGSMITH_API_KEY=${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_PROJECT=${{ secrets.LANGSMITH_PROJECT }}
+
+          MONGO_URI=${{ secrets.MONGO_URI }}
+
+          AUTH_SECRET_KEY=${{ secrets.AUTH_SECRET_KEY }}
+          AUTH_ALGORITHM=${{ secrets.AUTH_ALGORITHM }}
+          AUTH_TOKEN_EXPIRE=${{ secrets.AUTH_TOKEN_EXPIRE }}
+
+          USE_SMTP=${{ secrets.USE_SMTP }}
+          SMTP_SERVER=${{ secrets.SMTP_SERVER }}
+          SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          SMTP_SENDER=${{ secrets.SMTP_SENDER }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+
+          RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+          EOF
+
+      - name: Copy docker-compose and .env to VPS
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "docker-compose.yml"
+          source: |
+            docker-compose.yml
+            .env
           target: /home/nexa/
 
       - name: Deploy to VPS
@@ -84,10 +125,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-
             cd /home/nexa
-
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-api:latest
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-ui:latest
-
             docker compose --env-file /home/nexa/.env up -d --no-build
