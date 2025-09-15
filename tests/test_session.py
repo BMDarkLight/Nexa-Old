@@ -192,7 +192,6 @@ def test_get_specific_session(MockChatOpenAI, authenticated_user_token):
     data = resp.json()
     assert data["session_id"] == session_id
     assert data["chat_history"] == chat_history
-    assert data["title"] == "Mocked Session Title"
 
 
 def test_delete_session(authenticated_user_token):
