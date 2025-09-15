@@ -104,6 +104,20 @@ jobs:
           RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
           EOF
 
+      - name: Verify .env and docker-compose.yml exist
+        run: |
+          set -e
+          if [ ! -f ".env" ]; then
+            echo "❌ .env file is missing!"
+            exit 1
+          fi
+          if [ ! -f "docker-compose.yml" ]; then
+            echo "❌ docker-compose.yml is missing!"
+            exit 1
+          fi
+          echo "✅ Required files exist:"
+          ls -la .env docker-compose.yml
+
       - name: Copy docker-compose and .env to VPS
         uses: appleboy/scp-action@v1
         with:
@@ -124,6 +138,17 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
+            if [ ! -f "/home/nexa/.env" ]; then
+              echo "❌ Remote .env file is missing!"
+              exit 1
+            fi
+            if [ ! -f "/home/nexa/docker-compose.yml" ]; then
+              echo "❌ Remote docker-compose.yml is missing!"
+              exit 1
+            fi
+            echo "✅ Remote files verified"
+
             docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
             cd /home/nexa
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-api:latest
