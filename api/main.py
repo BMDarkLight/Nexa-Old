@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from passlib.context import CryptContext
 from dotenv import load_dotenv, find_dotenv
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 from bson import ObjectId
 
@@ -524,6 +524,18 @@ def invite_signin(
     return {"message": "Invited user signed up successfully."}
 
 # --- User Management Routes ---
+class UserCreateModel(BaseModel):
+    username : str
+    password : str
+    email : str
+    permission: Literal['sysadmin', 'orgadmin', 'orguser'] = 'sysadmin'
+    firstname: Optional[str] = None
+    lastname: Optional[str] = None
+    phone: Optional[str] = None
+    organization: Optional[str] = None
+    plan: Optional[str] = "free"
+
+
 class UserUpdateModel(BaseModel):
     username : str
     firstname: Optional[str] = None
@@ -556,6 +568,93 @@ def list_users(token: str = Depends(oauth2_scheme)):
             user["organization"] = str(user["organization"])
 
     return users
+
+@app.post("/users")
+def create_user(user: UserCreateModel, token: str = Depends(oauth2_scheme)):
+    requester = verify_token(token)
+    
+    if requester.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied. Sysadmin role required.")
+
+    if users_db.find_one({"username": user.username}) or prospective_users_db.find_one({"username": user.username}):
+        raise HTTPException(status_code=409, detail="User already exists.")
+    
+    base_user_doc = {
+        "username": user.username,
+        "password": pwd_context.hash(user.password),
+        "email": user.email,
+        "firstname": user.firstname or "",
+        "lastname": user.lastname or "",
+        "phone": user.phone or "",
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow()
+    }
+    
+    if user.permission == "sysadmin":
+        user_doc = base_user_doc | {"permission": "sysadmin"}
+        result = users_db.insert_one(user_doc)
+
+        if not result.acknowledged:
+            raise HTTPException(status_code=500, detail="Failed to create system admin user.")
+
+    elif user.permission == "orgadmin":
+        if not user.organization:
+            raise HTTPException(status_code=400, detail="Organization name is required for an org admin.")
+        
+        if orgs_db.find_one({"name": user.organization}):
+            raise HTTPException(status_code=409, detail="Organization already exists.")
+        
+        user_doc = base_user_doc | {"permission": "orgadmin"}
+        user_result = users_db.insert_one(user_doc)
+        
+        if not user_result.acknowledged:
+            raise HTTPException(status_code=500, detail="User creation phase failed for org admin.")
+        
+        user_id = user_result.inserted_id
+        
+        org_doc = {
+            "name": user.organization,
+            "owner": user_id, "users": [user_id], "description": "",
+            "plan": user.plan or "free", "settings": {},
+            "created_at": datetime.datetime.utcnow(), "updated_at": datetime.datetime.utcnow()
+        }
+
+        org_result = orgs_db.insert_one(org_doc)
+        
+        if not org_result.acknowledged:
+            users_db.delete_one({"_id": user_id}) 
+            raise HTTPException(status_code=500, detail="Organization creation failed. User creation has been rolled back.")
+
+        org_id = org_result.inserted_id
+
+        update_result = users_db.update_one({"_id": user_id}, {"$set": {"organization": org_id}})
+        
+        if update_result.modified_count != 1:
+            users_db.delete_one({"_id": user_id})
+            orgs_db.delete_one({"_id": org_id})
+            raise HTTPException(status_code=500, detail="Failed to link user to organization. All changes have been rolled back.")
+
+    elif user.permission == "orguser":
+        if not user.organization:
+            raise HTTPException(status_code=400, detail="Organization name is required for an org user.")
+        
+        org = orgs_db.find_one({"name": user.organization})
+        
+        if not org:
+            raise HTTPException(status_code=404, detail=f"Organization '{user.organization}' not found.")
+        
+        user_doc = base_user_doc | {
+            "permission": "orguser",
+            "organization": org.get("_id")
+        }
+        result = users_db.insert_one(user_doc)
+        if not result.acknowledged:
+            raise HTTPException(status_code=500, detail="Failed to create organization user.")
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid user permission '{user.permission}' provided.")
+
+    return {"status": "success", "message": f"User '{user.username}' created successfully."}
 
 @app.get("/users/{username}")
 def get_user(username: str, token: str = Depends(oauth2_scheme)):
