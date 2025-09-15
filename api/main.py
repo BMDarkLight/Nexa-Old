@@ -14,6 +14,7 @@ from api.mail import send_email
 
 import datetime
 import secrets
+import hashlib
 
 app = FastAPI(title="Nexa API")
 
@@ -34,14 +35,18 @@ load_dotenv(dotenv_path=find_dotenv())
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
+    
+    api_description = """Gen-AI for Organizations. Streamline all workflows across messenger, workspaces and organizational system in one place, and make them smart using AI."""
+
     openapi_schema = get_openapi(
         title="Nexa API",
-        version="1.0.0",
-        description="Gen-AI for Organizations. Streamline all workflows across messenger, workspaces and organizational system in one place, and make them smart using AI.",
+        version="Beta",
+        description=api_description,
         routes=app.routes,
     )
+
     openapi_schema["components"]["securitySchemes"] = {
-        "OAuth2Password": {
+        "OAuth2PasswordBearer": {
             "type": "oauth2",
             "flows": {
                 "password": {
@@ -56,12 +61,19 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    public_paths = {"/signin", "/signup", "/login", "/", "/forgot-password", "/reset-password", "/check-reset-token", "/invite/signup/{username}"}
+
+    public_paths = {"/signup", "/signup", "/login", "/", "/chatbot", "/forgot-password", "/reset-password", "/check-reset-token", "/invite/signup/{username}"}
+    
     for path_name, path in openapi_schema["paths"].items():
         if path_name in public_paths:
             continue
+            
         for operation in path.values():
-            operation["security"] = [{"OAuth2Password": []}, {"BearerAuth": []}]
+            if path_name == "/refresh-token":
+                operation["security"] = [{"BearerAuth": []}]
+            else:
+                operation["security"] = [{"OAuth2PasswordBearer": []}, {"BearerAuth": []}]
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
@@ -195,13 +207,23 @@ def signin(form_data: OAuth2PasswordRequestForm = Depends()):
     user = users_db.find_one({"username": form_data.username})
     if not user or not pwd_context.verify(form_data.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    if user.get("status") == "pending":
-        raise HTTPException(status_code=403, detail="User is pending approval")
-    
-    access_token = create_access_token(data={"sub": user["username"]})
 
-    return {"access_token": access_token, "token_type": "bearer"}
+    token_data = {"sub": user["username"]}
+    
+    access_token = create_access_token(data=token_data)
+    refresh_token = create_refresh_token(data=token_data)
+
+    hashed_refresh = hashlib.sha256(refresh_token.encode()).hexdigest()
+
+    users_db.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"refresh_token_hash": hashed_refresh}}
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+    }
 
 class ForgotPasswordModel(BaseModel):
     username: str
@@ -271,6 +293,39 @@ def reset_password(form_data: ResetPasswordModel):
     )
     
     return {"message": "Password reset successfully"}
+
+class RefreshResponseModel(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+@app.post("/refresh-token", response_model=RefreshResponseModel)
+def refresh_access_token(token: str = Depends(oauth2_scheme)):
+    payload = verify_token(token, expected_type="refresh")
+    username = payload.get("sub")
+    
+    hashed_token = hashlib.sha256(token.encode()).hexdigest()
+    
+    user = users_db.find_one({"username": username})
+
+    if not user or user.get("refresh_token_hash") != hashed_token:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+        
+    new_token_data = {"sub": username}
+    new_access_token = create_access_token(data=new_token_data)
+    new_refresh_token = create_refresh_token(data=new_token_data)
+    
+    new_hashed_refresh = hashlib.sha256(new_refresh_token.encode()).hexdigest()
+    users_db.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"refresh_token_hash": new_hashed_refresh}}
+    )
+    
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+    }
 
 # --- Prospective Users Routes ---
 @app.post("/signup/approve/{username}")
