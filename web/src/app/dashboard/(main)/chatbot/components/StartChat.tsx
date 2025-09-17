@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { ArrowUp } from "lucide-react";
 import {
@@ -12,23 +12,61 @@ import {
 import { useRouter } from "next/navigation";
 import Cookie from "js-cookie";
 
+interface Agent {
+  _id: string;
+  name: string;
+  description: string;
+  org: string;
+  model: string;
+  temperature: number;
+  tools: string[];
+  connector_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 export default function StartChat() {
   const [query, setQuery] = useState("");
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [isSending, setIsSending] = useState(false);
   const router = useRouter();
-  const token = Cookie.get("auth_token");
+
+  const token = Cookie.get("auth_token") ?? "";
+  const tokenType = Cookie.get("token_type") ?? "Bearer";
+  const authHeader = `${tokenType} ${token}`;
 
   const API_Base_Url =
     process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
   const End_point_ask = "/ask";
+  const End_point_agents = "/agents";
 
+  // get agents list
+  useEffect(() => {
+    const fetchAgents = async () => {
+      try {
+        const res = await fetch(`${API_Base_Url}${End_point_agents}`, {
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+          },
+        });
+        if (!res.ok) throw new Error("Error fetching agents");
+        const data: Agent[] = await res.json();
+        setAgents(data);
+      } catch (err) {
+        console.error("Failed to fetch agents:", err);
+      }
+    };
+    fetchAgents();
+  }, []);
+
+  // handle sessions + session id
   const handleSend = async () => {
     if (!query) return;
 
     setIsSending(true);
     try {
-      // ساختن session_id جدید
       const sessionId = Math.random().toString(36).substring(2, 18);
 
       const body: any = { query, session_id: sessionId };
@@ -38,17 +76,32 @@ export default function StartChat() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: authHeader,
         },
         body: JSON.stringify(body),
       });
 
       if (!res.ok) throw new Error("Error in /ask request");
 
-      // اگر سرور session_id برگردوند، از همون استفاده کن
+      // consume 
+      try {
+        const reader = res.body?.getReader();
+        if (reader) {
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            decoder.decode(value, { stream: true }); // فقط مصرف می‌کنیم
+          }
+        } else {
+          await res.clone().text();
+        }
+      } catch (err) {
+        console.warn("Reading /ask response stream failed:", err);
+      }
+
       const responseSessionId = res.headers.get("X-Session-Id") || sessionId;
 
-      // ریدایرکت به صفحه‌ی Chatbot با sessionId
       router.push(`/dashboard/chatbot/${responseSessionId}`);
     } catch (err) {
       console.error(err);
@@ -74,13 +127,15 @@ export default function StartChat() {
         <div className="chat-input relative">
           <div className="absolute right-3 top-2">
             <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-              <SelectTrigger className="w-[120px] text-xs rounded-xl">
+              <SelectTrigger className="w-[150px] text-xs rounded-xl">
                 <SelectValue placeholder="انتخاب ایجنت" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="agent1">ایجنت ۱</SelectItem>
-                <SelectItem value="agent2">ایجنت ۲</SelectItem>
-                <SelectItem value="agent3">ایجنت ۳</SelectItem>
+                {agents.map((agent) => (
+                  <SelectItem key={agent._id} value={agent._id}>
+                    {agent.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

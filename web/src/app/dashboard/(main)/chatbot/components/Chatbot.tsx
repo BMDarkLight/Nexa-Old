@@ -30,13 +30,18 @@ interface ChatMessage {
   user: string;
   bot?: string;
   message_num?: string;
+  agent_id?: string | null;
+  agent_name?: string | null;
 }
 
 const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
 const End_point_ask = "/ask";
 const End_point_agents = "/agents";
+
 const token = Cookie.get("auth_token") ?? "";
+const tokenType = Cookie.get("token_type") ?? "Bearer";
+const authHeader = `${tokenType} ${token}`;
 
 export default function Chatbot() {
   const params = useParams();
@@ -48,6 +53,7 @@ export default function Chatbot() {
   const [isSending, setIsSending] = useState<boolean>(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isBotTyping, setIsBotTyping] = useState<boolean>(false);
+  const [username, setUsername] = useState<string>("کاربر");
 
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editValue, setEditValue] = useState<string>("");
@@ -58,13 +64,35 @@ export default function Chatbot() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // لود ایجنت‌ها
+  // get username 
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const res = await fetch(`${API_Base_Url}/users`, {
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+          },
+        });
+        if (!res.ok) throw new Error("Error fetching user info");
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setUsername(data[0].username || "کاربر");
+        }
+      } catch (error) {
+        console.error("Error fetching user:", error);
+      }
+    };
+    fetchUser();
+  }, []);
+
+  // get agents
   useEffect(() => {
     const fetchAgents = async () => {
       try {
         const res = await fetch(`${API_Base_Url}${End_point_agents}`, {
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: authHeader,
             "Content-Type": "application/json",
           },
         });
@@ -77,28 +105,42 @@ export default function Chatbot() {
     fetchAgents();
   }, []);
 
-  // لود تاریخچه چت از /sessions/{session_id}
+  // get history chat (call /sessions/{session_id}) + retry 
   useEffect(() => {
-    const fetchSessionHistory = async () => {
+    const fetchSessionHistory = async (retry = 3, delay = 1000) => {
       if (!sessionId) return;
       try {
         const res = await fetch(`${API_Base_Url}/sessions/${sessionId}`, {
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: authHeader,
             "Content-Type": "application/json",
           },
         });
+
+        if (res.status === 404 && retry > 0) {
+          setTimeout(() => fetchSessionHistory(retry - 1, delay), delay);
+          return;
+        }
+
         if (!res.ok) throw new Error("Error fetching session history");
 
         const data = await res.json();
-
         setChatHistory(
           data.chat_history.map((msg: any, idx: number) => ({
             user: msg.user,
             bot: msg.assistant,
             message_num: idx.toString(),
+            agent_id: msg.agent_id,
+            agent_name: msg.agent_name,
           }))
         );
+
+        // set agent name depend on last choosen agent
+        if (data.chat_history?.length > 0) {
+          const lastAgentId =
+            data.chat_history[data.chat_history.length - 1].agent_id;
+          if (lastAgentId) setSelectedAgent(lastAgentId);
+        }
 
         scrollToBottom();
       } catch (err) {
@@ -109,14 +151,22 @@ export default function Chatbot() {
     fetchSessionHistory();
   }, [sessionId]);
 
+  // handle agent name + agent id
   const handleSend = async () => {
     if (!query) return;
 
     const userMessage = query;
+    const agentName = agents.find((a) => a._id === selectedAgent)?.name || null;
     setChatHistory((prev) => [
       ...prev,
-      { user: userMessage, message_num: prev.length.toString() },
+      {
+        user: userMessage,
+        message_num: prev.length.toString(),
+        agent_id: selectedAgent,
+        agent_name: agentName,
+      },
     ]);
+
     setQuery("");
     setIsSending(true);
     setIsBotTyping(true);
@@ -129,7 +179,7 @@ export default function Chatbot() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: authHeader,
         },
         body: JSON.stringify(body),
       });
@@ -161,6 +211,7 @@ export default function Chatbot() {
     }
   };
 
+  // handle edit btn
   const handleSaveEdit = async (index: number) => {
     if (index === null) return;
     const msg = chatHistory[index];
@@ -178,7 +229,7 @@ export default function Chatbot() {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
-            Authorization: `Bearer ${token}`,
+            Authorization: authHeader,
           },
           body: params.toString(),
         }
@@ -200,6 +251,8 @@ export default function Chatbot() {
             const updated = [...prev];
             updated[index].user = editValue;
             updated[index].bot = botMessage;
+            updated[index].agent_name =
+              agents.find((a) => a._id === selectedAgent)?.name || null;
             return updated;
           });
           scrollToBottom();
@@ -220,6 +273,7 @@ export default function Chatbot() {
     }
   };
 
+  // handle loading for show agent messages
   const TypingIndicator = () => (
     <span className="flex items-center gap-1">
       <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce delay-75"></span>
@@ -228,6 +282,7 @@ export default function Chatbot() {
     </span>
   );
 
+  // handle copy messages
   const CopyButton = ({ text }: { text: string }) => {
     const [copied, setCopied] = useState(false);
     const handleCopy = async () => {
@@ -280,7 +335,11 @@ export default function Chatbot() {
                       </button>
                     </div>
                   ) : (
-                    <div className="flex-1">{chat.user}</div>
+                    <div className="flex flex-col justify-center">
+                      <div className="font-bold">{username}</div>
+                      <div className="mt-1">{chat.user}</div>
+                    </div>
+                    
                   )}
                 </div>
                 {editingIndex !== idx && (
@@ -305,7 +364,7 @@ export default function Chatbot() {
                     <img src="/Squad/Login/chatbot.png" alt="bot" />
                   </div>
                   <div className="flex-1">
-                    <p className="font-bold">نکسا</p>
+                    <p className="font-bold">{chat.agent_name || "نکسا"}</p>
                     <div className="mt-2">{chat.bot}</div>
                   </div>
                 </div>

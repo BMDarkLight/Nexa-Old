@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "./ui/button";
 import Cookie from "js-cookie";
+import { usePathname, useRouter } from "next/navigation";
 
 // This is sample data.
 type ChatMessage = {
@@ -50,14 +51,23 @@ interface Session {
   id: string;
   title: string;
 }
+interface UserData {
+  username: string;
+  firstname: string;
+  lastname: string;
+  email: string;
+}
+
 const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
 const End_point = "/sessions";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [sessions, setSession] = React.useState<Session[]>([]);
+  const [userEmail, setUserEmail] = React.useState<string>("m@example.com"); 
+  const pathname = usePathname();
+  const router = useRouter();
 
-  // تابع fetch جداگانه برای استفاده مجدد
   const fetchSessions = async () => {
     try {
       const token = Cookie.get("auth_token");
@@ -81,7 +91,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         id: item.session_id,
         title: item.chat_history?.[0]?.user || "گفتگو بدون عنوان",
       }));
-      setSession(dataArr);
+
+      setSession(dataArr.reverse());
     } catch (err) {
       console.error(err);
     }
@@ -89,6 +100,36 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   React.useEffect(() => {
     fetchSessions();
+  }, []);
+
+  React.useEffect(() => {
+    if (pathname.startsWith("/dashboard/chatbot/")) {
+      fetchSessions();
+    }
+  }, [pathname]);
+
+  React.useEffect(() => {
+    const fetchUserEmail = async () => {
+      try {
+        const token = Cookie.get("auth_token");
+        const tokenType = Cookie.get("token_type");
+        const res = await fetch(`${API_Base_Url}/users`, {
+          headers: {
+            Authorization: `${tokenType} ${token}`,
+            "Content-Type": "application/json",
+          },
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error("Error fetching user info");
+        const data: UserData[] = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setUserEmail(data[0].email || "m@example.com");
+        }
+      } catch (error) {
+        console.error("Error fetching user email:", error);
+      }
+    };
+    fetchUserEmail();
   }, []);
 
   // Delete Sessions
@@ -114,36 +155,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
   };
 
-  // اضافه شدن قابلیت رفرش لیست بعد از ایجاد سشن جدید
-  const handleNewChat = async () => {
-    try {
-      const token = Cookie.get("auth_token");
-      const token_type = Cookie.get("token_type");
-      const res = await fetch(`${API_Base_Url}${End_point}`, {
-        method: "POST",
-        headers: {
-          Authorization: `${token_type} ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        console.log(data.detail);
-        return;
-      }
-      await res.json();
-      // بعد از ایجاد سشن جدید، لیست sessionها را دوباره fetch می‌کنیم
-      fetchSessions();
-    } catch (err) {
-      console.error(err);
-    }
+  const handleNewChat = () => {
+    router.push("/dashboard");
   };
 
   const data = {
     user: {
       name: "",
-      email: "m@example.com",
+      email: userEmail, 
       avatar: "/avatars/shadcn.jpg",
     },
     teams: [
@@ -215,7 +234,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <NavProjects projects={data.projects} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser user={data.user}  /> 
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
