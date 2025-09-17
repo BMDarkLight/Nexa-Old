@@ -15,7 +15,7 @@ import { ArrowBigLeft, ArrowLeft } from "lucide-react";
 import ReturnBtn from "./ReturnBtn";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAgent } from "@/app/context/AgentsContext";
+import { useAgent } from "@/app/dashboard/context/AgentsContext";
 const availableTools = ["سرچ", "ماشین حساب", "حافظه", "مرورگر"];
 export default function NewAgentCom(){
       // const {agent} = useAgent()

@@ -1,4 +1,4 @@
-import { AgentProvider } from "@/app/context/AgentsContext";
+import { AgentProvider } from "@/app/dashboard/context/AgentsContext";
 
 export default function AgentsLayout({
   children,

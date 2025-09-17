@@ -1,7 +1,7 @@
 import React from "react";
 import Header from "@/components/Header";
 import NewAgentCom from "../components/NewAgent";
-import { AgentProvider } from "@/app/context/AgentsContext";
+import { AgentProvider } from "@/app/dashboard/context/AgentsContext";
 export default function NewAgent(){
       return(
             <>

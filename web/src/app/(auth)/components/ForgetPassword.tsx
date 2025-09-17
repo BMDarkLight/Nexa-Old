@@ -53,12 +53,15 @@ export default function ForgetPasswordCom() {
       );
 
       if (!loginRes.ok) {
-        Swal.fire({
-          icon: "error",
-          title: "خطا",
-          text: "خطا به وجود آمد",
-        });
-        return;
+        // Swal.fire({
+        //   icon: "error",
+        //   title: "خطا",
+        //   text: "خطا به وجود آمد",
+        // });
+        // return;
+        const data = await loginRes.json()
+        console.log(data.detail);
+        
       }
 
       Swal.fire({
@@ -85,13 +88,12 @@ export default function ForgetPasswordCom() {
       <form onSubmit={handleSubmit(onSubmit)}>
         <div className="flex flex-col gap-6">
           <div className="grid gap-3">
-            <Label htmlFor="email">
+            <Label htmlFor="username">
               نام کاربری<span className="text-[#EF4444]">*</span>
             </Label>
             <Input
-              id="email"
+              id="username"
               type="text"
-              placeholder="m@example.com"
               {...register("username")}
             />
             {}

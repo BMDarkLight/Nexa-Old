@@ -17,9 +17,13 @@ import DeleteAgent from "./DeleteAgent";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Cookie from "js-cookie";
-const tooltipIcon = [{
-      name:"Figma" , src: "/Squad/image/figma.png"
-} , { name:"Google Drive" , src:"/Squad/image/goole-drive.png"} , {name:"Notion" , src:"/Squad/image/notion.png"} , {name:"Temple" , src:"/Squad/image/temple.png"}]
+const toolIcons: Record<string, { name: string; src: string }> = {
+  search_web: { name: "جستجو در وب", src: "/Squad/image/search-web.png" },
+  notion: { name: "Notion", src: "/Squad/image/notion.png" },
+  figma: { name: "Figma", src: "/Squad/image/figma.png" },
+  google_drive: { name: "Google Drive", src: "/Squad/image/google-drive.png" },
+  temple: { name: "Temple", src: "/Squad/image/temple.png" },
+};
 interface Agents{
   _id: string;
   name: string;
@@ -81,15 +85,17 @@ export default function AgentCard(){
                         <Link href="/agent/new-agent"><Button className="cursor-pointer text-xs md:text-sm">ایجنت جدید <Plus /></Button></Link>
                   </div>
                   <div className="flex justify-between flex-wrap gap-5 md:grid lg:grid-cols-3 md:grid-cols-2 lg:gap-2">
-                        <Card className="w-full text-center">
+                       {
+                        agents.map((agent)=>(
+                               <Card className="w-full text-center" key={agent._id}>
                  <div className="">
                  <div>
                    <CardHeader className="flex flex-col items-center relative">
-                       <DeleteAgent />
+                       <DeleteAgent id={agent._id} onDelete={(deletid)=> setAgents((prev)=>prev.filter((a)=> a._id !== deletid))}/>
                         <div className="w-[72px] h-[72px] rounded-full flex justify-center items-center bg-card-foreground text-primary-foreground my-2">
                               <Bot  size={50}/>
                         </div>
-                     <CardTitle className="sm:text-base font-medium text-sm">نام ایجنت</CardTitle>
+                     <CardTitle className="sm:text-base font-medium text-sm">{agent.name}</CardTitle>
                 </CardHeader>
             <CardContent className="my-2">
                  <div className="flex justify-between text-xs md:text-sm mb-3">
@@ -101,18 +107,21 @@ export default function AgentCard(){
                   <div>
                        <TooltipProvider>
                         <div className="flex flex-row-reverse -space-x-1">
-                              {tooltipIcon.map((item , index)=>(
+                              {agent.tools.map((tool , index)=>{
+                              const toolData = toolIcons[tool]
+                              if (!toolData) return null
+                              return(
                                     <Tooltip key={index}>
                                           <TooltipTrigger asChild>
                                                 <div className="w-5 h-5 rounded-full overflow-hidden cursor-pointer transition-transform hover:scale-110 border-1">
-                                                      <img src={item.src} alt={item.name} className="object-cover w-full h-full"/>
+                                                      <img src={toolData.src} alt={toolData.name} className="object-cover w-full h-full"/>
                                                 </div>
                                           </TooltipTrigger>
                                           <TooltipContent>
-                                                <p>{item.name}</p>
+                                                <p>{toolData.name}</p>
                                           </TooltipContent>
                                     </Tooltip>
-                              ))}
+                              )})}
                         </div>
                        </TooltipProvider>
                   </div>
@@ -125,7 +134,9 @@ export default function AgentCard(){
            </div>
                  </div>
                  </div>
-            </Card>
+                        </Card>
+                        ))
+                       }
             
                   </div>
                </div>

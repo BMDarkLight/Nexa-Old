@@ -6,7 +6,7 @@ import { ArrowLeft, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import RedirectBtn from "./RedirectBtn";
-import { useAgent } from "@/app/context/AgentsContext";
+import { useAgent } from "@/app/dashboard/context/AgentsContext";
 import { useRouter } from "next/navigation";
 import Cookie from "js-cookie";
 const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
@@ -23,19 +23,20 @@ const handleSave = async () => {
       const res = await fetch(`${API_Base_Url}${End_point}`, {
         method: "POST",
         headers: {
-          Authorization: `${tokenType} ${token}`,
+          Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
         } ,
         body: JSON.stringify(agent),
       });
 
       if (!res.ok) {
-        throw new Error("خطا در ذخیره ایجنت");
+        const data = await res.json()
+        console.log(data.detail); 
       }
       router.push("/agent"); 
     } catch (error) {
       console.error(error);
-      alert("مشکلی در ذخیره ایجنت پیش آمد");
+      console.log(error);
     }
   };
       return(

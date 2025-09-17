@@ -44,7 +44,7 @@ export function TeamSwitcher({
             >
               <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-10 items-center justify-center rounded-lg">
                 <picture>
-                      <img src="/Squad/Login/Frame 4.svg" alt=""/>
+                      <img src="/Squad/Login/Logo.png" alt=""/>
                   </picture>
               </div>
               <div className="grid flex-1 text-right text-[16px] leading-tight">

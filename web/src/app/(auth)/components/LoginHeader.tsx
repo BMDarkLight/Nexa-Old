@@ -9,13 +9,14 @@ export default function LoginHeader({title , subTitle , headerLink} : TLoginHead
     return(
         <>
             <div className="flex flex-col items-center gap-2">
+                {/* Logo Image */}
                 <a
                     href="#"
                     className="flex flex-col items-center gap-2 font-medium"
                 >
                     <div className="flex size-8 items-center justify-center rounded-md">
                         <picture>
-                            <img src="/Squad/Login/Frame 4.svg" alt=""/>
+                            <img src="/Squad/Login/Logo.png" alt=""/>
                         </picture>
                     </div>
                 </a>

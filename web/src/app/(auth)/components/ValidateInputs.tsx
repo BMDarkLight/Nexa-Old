@@ -10,6 +10,8 @@ import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
 import Cookie from "js-cookie";
 import Swal from "sweetalert2";
+import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 interface IUserData {
   username: string;
   password: string;
@@ -33,17 +35,21 @@ export type TFormValue = {
 };
 const schema = Yup.object({
   username: Yup.string().required("لطفا نام کاربری خود را وارد کنید"),
-  password: Yup.string().required("وارد کردن رمز عبور اجباری است"),
+  password: Yup.string().required("وارد کردن رمز عبور اجباری است").min(8,"رمز عبور باید حداقل 8 کاراکتر باشد").matches(/^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z\d]{8,}$/ , "رمز عبور باید شامل حروف انگلیسی و حداقل یک عدد باشد (بدون علائم)"),
 });
 export default function ValidateInputs() {
+  const router = useRouter()
+  // handle Show Password
+  const [showPassword , setShowPassword] = useState(false)
   const {
     register,
     handleSubmit,
     watch,
-    formState: { errors },
+    formState: { errors  , isSubmitting},
     reset,
   } = useForm<TFormValue>({
     resolver: yupResolver(schema),
+    mode: "onTouched"
   });
 
   const onSubmit = async (data: TFormValue) => {
@@ -74,7 +80,7 @@ export default function ValidateInputs() {
       });
 
        const result = await loginRes.json();
-      console.log("Login response:", result);
+      // console.log("Login response:", result);
 
       if (!loginRes.ok || !result.access_token) {
         Swal.fire({
@@ -82,6 +88,8 @@ export default function ValidateInputs() {
           title: "خطا",
           text: "نام کاربری یا رمز عبور اشتباه است!",
         });
+        console.log(result.detail);
+        
         return;
       }
 
@@ -96,14 +104,11 @@ export default function ValidateInputs() {
         secure: process.env.NODE_ENV === "production",
       });
 
-      Swal.fire({ icon: "success", title: "موفق", text: "ورود موفقیت‌آمیز!" });
       reset();
+      router.push("/dashboard")
     } catch (err) {
-      Swal.fire({
-        icon: "error",
-        title: "خطا",
-        text: err instanceof Error ? err.message : "خطای ناشناخته",
-      });
+      console.error(err);
+      
     }
   };
 
@@ -127,7 +132,7 @@ export default function ValidateInputs() {
                 {...register("username")}
               />
               {errors.username && (
-                <p className="text-red-500 text-sm">
+                <p className="text-red-500 text-xs">
                   {errors.username.message}
                 </p>
               )}
@@ -144,15 +149,17 @@ export default function ValidateInputs() {
                   رمز عبورتان را فراموش کردید؟
                 </Link>
               </div>
-              <Input id="password" type="password" {...register("password")} />
-              {errors.password && (
-                <p className="text-red-500 text-sm">
+             <div className="relative">
+               <Input id="password" type={showPassword ? "text" : "password"} {...register("password")} />
+             </div>
+             {errors.password && (
+                <p className="text-red-500 text-xs">
                   {errors.password.message}
                 </p>
               )}
             </div>
-            <Button type="submit" className="w-full cursor-pointer">
-              ورود
+            <Button type="submit" className="w-full cursor-pointer" disabled={isSubmitting}>
+              {isSubmitting ? "در حال ورود" : "ورود"}
             </Button>
           </div>
         </div>

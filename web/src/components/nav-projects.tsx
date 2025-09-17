@@ -21,7 +21,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import Swal from "sweetalert2"
 import { cn } from "@/lib/utils"
-
+import Cookie from "js-cookie"
 export function NavProjects({
   projects,
 }: {
@@ -54,8 +54,9 @@ export function NavProjects({
       }
     })
     if(result.isConfirmed){
-      console.log("خارج شد");
-      
+      Cookie.remove("auth_token")
+      Cookie.remove("token_type")
+      window.location.href = "/login"
     }
   }
   const handleWalet = async ()=>{
@@ -77,6 +78,7 @@ export function NavProjects({
                 htmlContainer: "swal2-text",
               },
             });
+
   }
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
