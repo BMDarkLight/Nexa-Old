@@ -1388,3 +1388,102 @@ def delete_connector(connector_id: str, token: str = Depends(oauth2_scheme)):
     )
 
     return {"message": f"Connector '{connector_id}' deleted successfully."}
+
+@app.get("/agents/{agent_id}/connectors", status_code=200)
+def list_agent_connectors(agent_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    org_id = ObjectId(user["organization"])
+
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": org_id})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    connector_ids = agent.get("connector_ids", [])
+    connectors = list(connectors_db.find({"_id": {"$in": connector_ids}, "org": org_id}))
+
+    return {"connectors": [Connector(**c) for c in connectors]}
+
+@app.get("/agents/{agent_id}/connectors/{connector_id}", status_code=200)
+def get_connector_of_agent(agent_id: str, connector_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    org_id = ObjectId(user["organization"])
+
+    if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(connector_id):
+        raise HTTPException(status_code=400, detail="Invalid agent or connector ID format.")
+
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": org_id})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    if "connector_ids" not in agent or ObjectId(connector_id) not in agent["connector_ids"]:
+        raise HTTPException(status_code=404, detail="Connector not associated with the agent.")
+
+    connector = connectors_db.find_one({"_id": ObjectId(connector_id), "org": org_id})
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+
+    return Connector(**connector)
+
+@app.post("/agents/{agent_id}/connectors/{connector_id}", status_code=200)
+def add_connector_to_agent(agent_id: str, connector_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    org_id = ObjectId(user["organization"])
+
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can modify agents.")
+
+    if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(connector_id):
+        raise HTTPException(status_code=400, detail="Invalid agent or connector ID format.")
+
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": org_id})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    connector = connectors_db.find_one({"_id": ObjectId(connector_id), "org": org_id})
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+
+    if "connector_ids" in agent and ObjectId(connector_id) in agent["connector_ids"]:
+        raise HTTPException(status_code=400, detail="Connector already associated with the agent.")
+
+    update_result = agents_db.update_one(
+        {"_id": ObjectId(agent_id)},
+        {"$addToSet": {"connector_ids": ObjectId(connector_id)}, "$set": {"updated_at": datetime.datetime.utcnow().isoformat()}}
+    )
+
+    if update_result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Agent not found during update.")
+
+    return {"message": f"Connector '{connector_id}' added to agent '{agent_id}' successfully."}
+
+@app.delete("/agents/{agent_id}/connectors/{connector_id}", status_code=200)
+def delete_connector_from_agent(agent_id: str, connector_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    org_id = ObjectId(user["organization"])
+
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can modify agents.")
+    
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": org_id})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+
+    connector = connectors_db.find_one({"_id": ObjectId(connector_id), "org": org_id})
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+    
+    if not "connector_ids" in agent or not ObjectId(connector_id) in agent["connector_ids"]:
+        raise HTTPException(status_code=400, detail="Connector isn't associated with the agent.")
+    
+    update_result = agents_db.update_one(
+        {"_id": ObjectId(agent_id)},
+        {"$pull": {"connector_ids": ObjectId(connector_id)}, "$set": {"updated_at": datetime.datetime.utcnow().isoformat()}}
+    )
+
+    if update_result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Agent not found during update.")
+    
+    return {"message": f"Connector '{connector_id}' removed from agent '{agent_id}' successfully."}
