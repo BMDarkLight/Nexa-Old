@@ -30,19 +30,29 @@ export default function StartChat() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const router = useRouter();
 
-  const token = Cookie.get("auth_token") ?? "";
-  const tokenType = Cookie.get("token_type") ?? "Bearer";
-  const authHeader = `${tokenType} ${token}`;
+  // ✅ authHeader از کوکی‌ها
+  const [authHeader, setAuthHeader] = useState<string>("");
+
+  const router = useRouter();
 
   const API_Base_Url =
     process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
   const End_point_ask = "/ask";
   const End_point_agents = "/agents";
 
+  // ✅ خوندن کوکی بعد از mount
+  useEffect(() => {
+    const token = Cookie.get("auth_token");
+    const tokenType = Cookie.get("token_type") ?? "Bearer";
+    if (token) {
+      setAuthHeader(`${tokenType} ${token}`);
+    }
+  }, []);
+
   // get agents list
   useEffect(() => {
+    if (!authHeader) return;
     const fetchAgents = async () => {
       try {
         const res = await fetch(`${API_Base_Url}${End_point_agents}`, {
@@ -59,11 +69,11 @@ export default function StartChat() {
       }
     };
     fetchAgents();
-  }, []);
+  }, [authHeader]);
 
   // handle sessions + session id
   const handleSend = async () => {
-    if (!query) return;
+    if (!query || !authHeader) return;
 
     setIsSending(true);
     try {
@@ -83,7 +93,7 @@ export default function StartChat() {
 
       if (!res.ok) throw new Error("Error in /ask request");
 
-      // consume 
+      // consume stream
       try {
         const reader = res.body?.getReader();
         if (reader) {
@@ -121,7 +131,9 @@ export default function StartChat() {
     <div className="h-[90vh] flex items-center justify-center w-[85%] mx-auto">
       <div className="chat-wrapper w-full">
         <div className="chat-header mb-4">
-          <h2 className="font-bold text-xl">امروز می‌خواهید چه چیزی را تحلیل کنید؟</h2>
+          <h2 className="font-bold text-xl">
+            امروز می‌خواهید چه چیزی را تحلیل کنید؟
+          </h2>
         </div>
 
         <div className="chat-input relative">

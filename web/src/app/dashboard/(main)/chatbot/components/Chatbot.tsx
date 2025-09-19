@@ -39,10 +39,6 @@ const API_Base_Url =
 const End_point_ask = "/ask";
 const End_point_agents = "/agents";
 
-const token = Cookie.get("auth_token") ?? "";
-const tokenType = Cookie.get("token_type") ?? "Bearer";
-const authHeader = `${tokenType} ${token}`;
-
 export default function Chatbot() {
   const params = useParams();
   const sessionId = params?.session_id as string;
@@ -58,14 +54,27 @@ export default function Chatbot() {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editValue, setEditValue] = useState<string>("");
 
+  // ✅ استیت برای کوکی‌ها
+  const [authHeader, setAuthHeader] = useState<string>("");
+
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // get username 
+  // ✅ کوکی‌ها رو بعد از mount بخون
   useEffect(() => {
+    const token = Cookie.get("auth_token");
+    const tokenType = Cookie.get("token_type") ?? "Bearer";
+    if (token) {
+      setAuthHeader(`${tokenType} ${token}`);
+    }
+  }, []);
+
+  // get username
+  useEffect(() => {
+    if (!authHeader) return;
     const fetchUser = async () => {
       try {
         const res = await fetch(`${API_Base_Url}/users`, {
@@ -84,10 +93,11 @@ export default function Chatbot() {
       }
     };
     fetchUser();
-  }, []);
+  }, [authHeader]);
 
   // get agents
   useEffect(() => {
+    if (!authHeader) return;
     const fetchAgents = async () => {
       try {
         const res = await fetch(`${API_Base_Url}${End_point_agents}`, {
@@ -103,12 +113,12 @@ export default function Chatbot() {
       }
     };
     fetchAgents();
-  }, []);
+  }, [authHeader]);
 
-  // get history chat (call /sessions/{session_id}) + retry 
+  // get history chat
   useEffect(() => {
+    if (!authHeader || !sessionId) return;
     const fetchSessionHistory = async (retry = 3, delay = 1000) => {
-      if (!sessionId) return;
       try {
         const res = await fetch(`${API_Base_Url}/sessions/${sessionId}`, {
           headers: {
@@ -135,7 +145,6 @@ export default function Chatbot() {
           }))
         );
 
-        // set agent name depend on last choosen agent
         if (data.chat_history?.length > 0) {
           const lastAgentId =
             data.chat_history[data.chat_history.length - 1].agent_id;
@@ -149,11 +158,11 @@ export default function Chatbot() {
     };
 
     fetchSessionHistory();
-  }, [sessionId]);
+  }, [authHeader, sessionId]);
 
-  // handle agent name + agent id
+  // handle send
   const handleSend = async () => {
-    if (!query) return;
+    if (!query || !authHeader) return;
 
     const userMessage = query;
     const agentName = agents.find((a) => a._id === selectedAgent)?.name || null;
@@ -213,7 +222,7 @@ export default function Chatbot() {
 
   // handle edit btn
   const handleSaveEdit = async (index: number) => {
-    if (index === null) return;
+    if (index === null || !authHeader) return;
     const msg = chatHistory[index];
     if (!msg?.message_num) return;
 
@@ -339,7 +348,6 @@ export default function Chatbot() {
                       <div className="font-bold">{username}</div>
                       <div className="mt-1">{chat.user}</div>
                     </div>
-                    
                   )}
                 </div>
                 {editingIndex !== idx && (

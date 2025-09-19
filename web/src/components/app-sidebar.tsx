@@ -2,21 +2,12 @@
 
 import * as React from "react";
 import {
-  AudioWaveform,
-  BookOpen,
-  Bot,
   BotIcon,
-  Command,
-  Frame,
   GalleryVerticalEnd,
   LogOut,
-  Map,
   MessageSquare,
-  PieChart,
   Plus,
   Settings,
-  Settings2,
-  SquareTerminal,
   Unplug,
 } from "lucide-react";
 
@@ -35,7 +26,6 @@ import { Button } from "./ui/button";
 import Cookie from "js-cookie";
 import { usePathname, useRouter } from "next/navigation";
 
-// This is sample data.
 type ChatMessage = {
   user: string;
   assistant: string;
@@ -64,17 +54,27 @@ const End_point = "/sessions";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [sessions, setSession] = React.useState<Session[]>([]);
-  const [userEmail, setUserEmail] = React.useState<string>("m@example.com"); 
+  const [userEmail, setUserEmail] = React.useState<string>("m@example.com");
+  const [authHeader, setAuthHeader] = React.useState<string>("");
+
   const pathname = usePathname();
   const router = useRouter();
 
+  // ✅ گرفتن کوکی‌ها بعد از mount
+  React.useEffect(() => {
+    const token = Cookie.get("auth_token");
+    const tokenType = Cookie.get("token_type") ?? "Bearer";
+    if (token) {
+      setAuthHeader(`${tokenType} ${token}`);
+    }
+  }, []);
+
   const fetchSessions = async () => {
+    if (!authHeader) return;
     try {
-      const token = Cookie.get("auth_token");
-      const tokenType = Cookie.get("token_type");
       const res = await fetch(`${API_Base_Url}${End_point}`, {
         headers: {
-          Authorization: `${tokenType} ${token}`,
+          Authorization: authHeader,
           "Content-Type": "application/json",
         },
         cache: "no-store",
@@ -100,7 +100,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   React.useEffect(() => {
     fetchSessions();
-  }, []);
+  }, [authHeader]);
 
   React.useEffect(() => {
     if (pathname.startsWith("/dashboard/chatbot/")) {
@@ -109,13 +109,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }, [pathname]);
 
   React.useEffect(() => {
+    if (!authHeader) return;
     const fetchUserEmail = async () => {
       try {
-        const token = Cookie.get("auth_token");
-        const tokenType = Cookie.get("token_type");
         const res = await fetch(`${API_Base_Url}/users`, {
           headers: {
-            Authorization: `${tokenType} ${token}`,
+            Authorization: authHeader,
             "Content-Type": "application/json",
           },
           cache: "no-store",
@@ -130,17 +129,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       }
     };
     fetchUserEmail();
-  }, []);
+  }, [authHeader]);
 
   // Delete Sessions
   const handleDeleteSessions = async (sessionId: string) => {
+    if (!authHeader) return;
     try {
-      const token = Cookie.get("auth_token");
-      const token_type = Cookie.get("token_type");
       const res = await fetch(`${API_Base_Url}${End_point}/${sessionId}`, {
         method: "DELETE",
         headers: {
-          Authorization: `${token_type} ${token}`,
+          Authorization: authHeader,
           "Content-Type": "application/json",
         },
       });
@@ -162,7 +160,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const data = {
     user: {
       name: "",
-      email: userEmail, 
+      email: userEmail,
       avatar: "/avatars/shadcn.jpg",
     },
     teams: [
@@ -234,7 +232,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <NavProjects projects={data.projects} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user}  /> 
+        <NavUser user={data.user} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
