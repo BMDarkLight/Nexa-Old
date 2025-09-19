@@ -1389,6 +1389,39 @@ def delete_connector(connector_id: str, token: str = Depends(oauth2_scheme)):
 
     return {"message": f"Connector '{connector_id}' deleted successfully."}
 
+@app.get("/connectors/{connector_id}/settings")
+def get_connector_settings(connector_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    org_id = ObjectId(user["organization"])
+
+    if not ObjectId.is_valid(connector_id):
+        raise HTTPException(status_code=400, detail="Invalid connector ID format.")
+
+    connector = connectors_db.find_one({"_id": ObjectId(connector_id), "org": org_id})
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+
+    return {"settings": connector.get("settings", {})}
+
+@app.put("/connectors/{connector_id}/settings", status_code=200)
+def update_connector_settings(connector_id: str, settings: dict, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    org_id = ObjectId(user["organization"])
+
+    if not ObjectId.is_valid(connector_id):
+        raise HTTPException(status_code=400, detail="Invalid connector ID format.")
+
+    
+    result = connectors_db.update_one(
+        {"_id": ObjectId(connector_id)},
+        {"$set": {"settings": settings}}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+    
+    return {"message": f"Settings for connector '{connector_id}' updated successfully."}
+
 @app.get("/agents/{agent_id}/connectors", status_code=200)
 def list_agent_connectors(agent_id: str, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
