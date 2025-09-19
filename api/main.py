@@ -225,7 +225,7 @@ def forgot_password(form_data: ForgotPasswordModel, background_tasks: Background
     reset_token = secrets.token_urlsafe(16)
     users_db.update_one({"username": username}, {"$set": {"reset_token": reset_token}})
     
-    reset_link = f"{SERVER_URL}:{UI_PORT}/login/reset-password?token={reset_token}&username={username}"
+    reset_link = f"{SERVER_URL}:{UI_PORT}/reset-password?token={reset_token}&username={username}"
     
     if user["email"]:
         background_tasks.add_task(
