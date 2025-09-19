@@ -32,4 +32,4 @@ USER nextjs
 
 EXPOSE ${UI_PORT}
 
-CMD ["sh", "-c", "node server.js -p $UI_PORT"]
+CMD ["sh", "-c", "PORT=$UI_PORT node server.js"]
