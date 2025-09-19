@@ -8,7 +8,6 @@ import LoginHeader from "./LoginHeader";
 import { useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
-import Cookie from "js-cookie";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
@@ -16,26 +15,11 @@ import { Eye, EyeOff } from "lucide-react";
 interface IUserData {
   username: string;
   password: string;
-  firstname: string;
-  lastname: string;
-  email: string;
-  phone: string;
-  organization: string;
-  plan: string;
-  token?: string;
 }
-
-const API_SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL;
-console.log("this is server url", API_SERVER_URL);
 
 const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
 const End_point = "/signin";
-
-export type TFormValue = {
-  username: string;
-  password: string;
-};
 
 const schema = Yup.object({
   username: Yup.string().required("لطفا نام کاربری خود را وارد کنید"),
@@ -57,12 +41,22 @@ export default function ValidateInputs() {
     handleSubmit,
     formState: { errors, isSubmitting },
     reset,
-  } = useForm<TFormValue>({
+  } = useForm<IUserData>({
     resolver: yupResolver(schema),
     mode: "onTouched",
   });
 
-  const onSubmit = async (data: TFormValue) => {
+  const setCookie = (name: string, value: string, days: number) => {
+    const expires = new Date();
+    expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
+    document.cookie = `${name}=${encodeURIComponent(
+      value
+    )};expires=${expires.toUTCString()};path=/;SameSite=Lax${
+      window.location.protocol === "https:" ? ";Secure" : ""
+    }`;
+  };
+
+  const onSubmit = async (data: IUserData) => {
     try {
       const loginRes = await fetch(`${API_Base_Url}${End_point}`, {
         method: "POST",
@@ -87,20 +81,9 @@ export default function ValidateInputs() {
 
       const { access_token, token_type } = result;
 
-      // ✅ ذخیره کوکی‌ها به روش مطمئن
-      Cookie.set("auth_token", access_token, {
-        expires: 7,
-        path: "/", // در همه مسیرها قابل دسترسی
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "Strict",
-      });
-
-      Cookie.set("token_type", token_type, {
-        expires: 7,
-        path: "/",
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "Strict",
-      });
+      // ✅ ست کردن کوکی‌ها بدون js-cookie و با قابلیت کار روی VPS
+      setCookie("auth_token", access_token, 7);
+      setCookie("token_type", token_type, 7);
 
       reset();
       router.push("/dashboard");
