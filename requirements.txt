@@ -7,6 +7,7 @@ python-dotenv==1.0.0
 python-jose==3.5.0
 pymongo==4.13.2
 python-multipart==0.0.20
+sentence-transformers==4.0.2
 numpy==1.26.4
 
 # Agent framework
@@ -25,6 +26,9 @@ google-api-python-client==2.179.0
 google-auth==2.40.3
 google-auth-httplib2==0.2.0
 google-auth-oauthlib==1.2.2
+
+pypdf==5.4.0
+PyPDF2==3.0.1
 
 # Email service
 resend==2.12.0
