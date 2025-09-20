@@ -8,8 +8,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import Cookie from "js-cookie";
+import Link from "next/link";
+import { Badge } from "@/components/ui/badge";
+import { useRouter } from "next/navigation";
 
 interface Connector {
   _id: string;
@@ -24,8 +27,9 @@ const API_Base_Url =
 
 export default function ConnectorCard() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const router = useRouter();
 
-  // گرفتن کانکتورها بعد از mount
+  // گرفتن لیست کانکتورها از API
   useEffect(() => {
     const fetchConnectors = async () => {
       const token = Cookie.get("auth_token");
@@ -38,11 +42,11 @@ export default function ConnectorCard() {
 
       try {
         const res = await fetch(`${API_Base_Url}/connectors`, {
+          method: "GET",
           headers: {
             Authorization: `${tokenType} ${token}`,
             "Content-Type": "application/json",
           },
-          credentials: "include",
         });
 
         if (!res.ok) {
@@ -66,7 +70,7 @@ export default function ConnectorCard() {
       case "google_sheet":
         return "/Squad/image/card-img.png";
       case "google_drive":
-        return "/Squad/image/google-drive.png";
+        return "/Squad/image/goole-drive.png";
       default:
         return "/Squad/image/card-img.png";
     }
@@ -74,18 +78,44 @@ export default function ConnectorCard() {
 
   // وضعیت اتصال
   const getConnectionStatus = (settings: Record<string, unknown>) => {
-    return Object.keys(settings || {}).length === 0
-      ? "متصل نیست"
-      : "متصل";
+    return Object.keys(settings || {}).length === 0 ? "متصل نیست" : "متصل";
+  };
+
+  // متن داینامیک بر اساس connector_type
+  const getConnectorDescription = (type: string) => {
+    switch (type) {
+      case "google_sheet":
+        return "جدول‌های گوگل شیت خود را تحلیل کنید.";
+      case "google_drive":
+        return "جدول گوگل درایو خود را تحلیل کنید.";
+      default:
+        return "";
+    }
+  };
+
+  // هنگام کلیک روی کارت - مسیر dynamic
+  const handleCardClick = (connectorId: string) => {
+    router.push(`/dashboard/connector/manage-connector/${connectorId}`);
   };
 
   return (
     <div className="flex flex-col gap-5 lg:px-5">
-      <h2 className="text-xl font-medium sm:mt-5 md:mt-0">افزودن اتصالات</h2>
+      <div className="flex justify-between mt-4 md:mt-0 items-center">
+        <h2 className="text-xl font-medium">لیست اتصالات</h2>
+        <Link href="connector/new-connector">
+          <Button className="cursor-pointer text-xs md:text-sm">
+            اتصال جدید<Plus />
+          </Button>
+        </Link>
+      </div>
 
       <div className="flex justify-between flex-wrap gap-5 lg:grid lg:grid-cols-3 lg:gap-2">
         {connectors.map((connector) => (
-          <Card key={connector._id} className="w-full">
+          <Card
+            key={connector._id}
+            className="w-full cursor-pointer"
+            onClick={() => handleCardClick(connector._id)}
+          >
             <div className="flex">
               <div>
                 <picture>
@@ -99,19 +129,23 @@ export default function ConnectorCard() {
               <div className="mr-3 w-full">
                 <CardHeader>
                   <CardTitle className="text-sm font-semibold">
-                    {connector.name}
+                    {connector.name || connector.connector_type}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="text-xs">
-                  <p>
-                    وضعیت اتصال:{" "}
-                    <span className="font-bold">
-                      {getConnectionStatus(connector.settings)}
-                    </span>
-                  </p>
+                  <p>{getConnectorDescription(connector.connector_type)}</p>
                 </CardContent>
                 <div className="flex justify-end mt-3">
-                  <CardFooter>
+                  <CardFooter className="flex justify-between w-full">
+                    <Badge
+                      className={`font-bold ${
+                        getConnectionStatus(connector.settings) === "متصل"
+                          ? "bg-[#0596691A] text-[#047857]"
+                          : "bg-red-200 text-red-600"
+                      }`}
+                    >
+                      {getConnectionStatus(connector.settings)}
+                    </Badge>
                     <Button className="cursor-pointer">
                       <ArrowLeft />
                     </Button>
