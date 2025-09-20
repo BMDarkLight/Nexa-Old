@@ -46,13 +46,12 @@ The backend handles authentication, user management, invitations, organizations,
 ### Prerequisites
 
 - Docker and Docker Compose installed
-- An `.env` file created based on `.env.local` with your environment variables, including keys like:
+- An `.env` file created based on `.env.example` with your environment variables, including keys like:
 
 ```env
 SYSADMIN_USERNAME=admin
 SYSADMIN_PASSWORD=changeme
 RESEND_API_KEY=your_resend_api_key
-MAIL_FROM=your_verified_email@example.com
 ```
 
 ### Running the Project with Docker
@@ -67,7 +66,7 @@ This will start the FastAPI backend and the Next.js frontend, exposing their res
 
 Accessing the API and Frontend (In the default configuration)
 	•	API Swagger UI: http://localhost:8000/docs
-	•	Frontend app: http://localhost:8010
+	•	Frontend app: http://localhost
 
 ### Running Tests
 
