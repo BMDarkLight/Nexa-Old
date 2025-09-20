@@ -8,7 +8,6 @@ from functools import partial
 from api.main import app, pwd_context
 from api.auth import users_db, orgs_db
 from api.agent import agents_db, connectors_db, get_agent_components
-from api.tools.google_sheet import read_google_sheet
 
 client = TestClient(app)
 
@@ -106,14 +105,22 @@ def test_delete_connector_and_verify_pull_from_agent(org_admin_token):
     assert connectors_db.count_documents({"_id": connector_id}) == 0
 
 @pytest.mark.asyncio
-async def test_agent_logic_with_connector(org_admin_token):
+async def test_agent_logic_with_refactored_connector(org_admin_token):
+    """
+    Tests that get_agent_components correctly configures and attaches a tool 
+    from a connector using the new factory pattern.
+    """
     _, org_id = org_admin_token
     
+    connectors_db.delete_many({"org": org_id})
+    agents_db.delete_many({"org": org_id})
+
+    connector_settings = {"credentials": "fake_creds_for_logic_test_abc123"}
     connector_doc = {
         "name": "Logic Test Sheet",
         "org": org_id,
         "connector_type": "google_sheet",
-        "settings": {"credentials": "fake_creds_for_logic_test"}
+        "settings": connector_settings
     }
     conn_result = connectors_db.insert_one(connector_doc)
     connector_id = conn_result.inserted_id
@@ -121,25 +128,37 @@ async def test_agent_logic_with_connector(org_admin_token):
     agent_doc = {
         "name": "Logic Test Agent",
         "org": org_id,
-        "model": "gpt-4",
-        "description": "A test agent for logic.",
+        "model": "gpt-4o-mini",
+        "description": "An agent that uses a Google Sheet connector.",
+        "tools": [],
         "connector_ids": [connector_id],
+        "created_at": "2023-01-01T00:00:00Z",
+        "updated_at": "2023-01-01T00:00:00Z",
     }
     agent_result = agents_db.insert_one(agent_doc)
     agent_id = str(agent_result.inserted_id)
 
-    llm, _, _, _ = await get_agent_components(
+    llm, messages, agent_name, returned_agent_id = await get_agent_components(
         question="Read data from my sheet.",
         organization_id=org_id,
         agent_id=agent_id
     )
 
-    assert "tools" in llm.model_kwargs
+    assert "tools" in llm.model_kwargs, "The 'tools' key should be in model_kwargs"
     configured_tools = llm.model_kwargs["tools"]
-    assert len(configured_tools) == 1
+    assert isinstance(configured_tools, list), "model_kwargs['tools'] should be a list"
+    assert len(configured_tools) == 1, "Expected one configured tool"
     
     configured_tool = configured_tools[0]
-    assert configured_tool.name == "read_google_sheet_logic_test_sheet"
-    assert isinstance(configured_tool.func, partial)
-    assert configured_tool.func.keywords["settings"]["credentials"] == "fake_creds_for_logic_test"
+    
+    assert configured_tool.name == "google_sheet_logic_test_sheet"
+    
+    assert isinstance(configured_tool.func, partial), "Tool's function should be a partial"
+    
+    assert len(configured_tool.func.args) > 0, "Partial function should have pre-filled arguments"
+    prefilled_settings = configured_tool.func.args[0]
+    
+    assert prefilled_settings == connector_settings, "The settings in the partial function do not match the database"
 
+    connectors_db.delete_one({"_id": connector_id})
+    agents_db.delete_one({"_id": agent_result.inserted_id})
