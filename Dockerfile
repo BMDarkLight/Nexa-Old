@@ -19,7 +19,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 ENV API_PORT=8000
-ENV UI_PORT=8010
+ENV UI_PORT=80
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
