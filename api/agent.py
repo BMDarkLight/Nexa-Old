@@ -1,3 +1,5 @@
+# api/agent.py
+
 from langchain_community.chat_models import ChatOpenAI
 from langsmith import traceable
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
@@ -8,11 +10,11 @@ from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict
 import os
 import re
-from functools import partial
 
 from api.tools.web import search_web
-from api.tools.google_sheet import read_google_sheet
-from api.tools.google_drive import read_google_drive
+from api.tools.google_sheet import get_google_sheet_tool
+from api.tools.google_drive import get_google_drive_tool
+from api.tools.pdf_source import get_pdf_source_tool
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -24,7 +26,8 @@ Tools = Literal[
 
 Connectors = Literal[
     "google_sheet",
-    "google_drive"
+    "google_drive",
+    "source_pdf"
 ]
 
 Models = Literal[
@@ -168,43 +171,32 @@ async def get_agent_components(
             ] if tool is not None
         ]
 
+        tool_factory_map = {
+            "google_sheet": get_google_sheet_tool,
+            "google_drive": get_google_drive_tool,
+            "source_pdf": get_pdf_source_tool
+        }
+
         connector_ids = selected_agent.get("connector_ids", [])
         if connector_ids:
             agent_connectors = list(connectors_db.find({"_id": {"$in": connector_ids}}))
-        else:
-            agent_connectors = []
-        
-        tool_function_map = {
-            "google_sheet": read_google_sheet,
-            "google_drive": read_google_drive
-        }
-
-        for connector in agent_connectors:
-            connector_name = connector.get("name")
-            connector_type = connector.get("connector_type")
-
-            if not connector_name or connector_type not in tool_function_map:
-                continue
-
-            base_function = tool_function_map[connector_type]
             
-            tool_name = _clean_tool_name(connector_name, base_function.name)
-            
-            tool_description = (
-                f"Use this tool to access the '{connector_name}' {connector_type.replace('_', ' ')}. "
-                f"It is a specialized version of the '{base_function.name}' tool.\n"
-                f"{base_function.__doc__}"
-            )
+            for connector in agent_connectors:
+                connector_type = connector.get("connector_type")
+                tool_factory = tool_factory_map.get(connector_type)
+                
+                if not tool_factory:
+                    continue
 
-            configured_func = partial(base_function, settings=connector["settings"])
+                tool_name = _clean_tool_name(connector["name"], connector_type)
+                
+                new_tool = tool_factory(
+                    settings=connector["settings"], 
+                    name=tool_name
+                )
+                active_tools.append(new_tool)
 
-            new_tool = Tool(
-                name=tool_name,
-                func=configured_func,
-                description=tool_description
-            )
-            active_tools.append(new_tool)
-        
+
         agent_llm = ChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
@@ -213,6 +205,7 @@ async def get_agent_components(
             streaming=True,
             max_retries=3
         )
+        
         system_prompt = selected_agent["description"]
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
@@ -238,4 +231,3 @@ async def get_agent_components(
         final_agent_name,
         str(final_agent_id) if final_agent_id else None,
     )
-

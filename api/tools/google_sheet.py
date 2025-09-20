@@ -1,21 +1,20 @@
 import json
-from langchain.agents import tool
+from functools import partial
+from typing import Dict, Any
+
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from langchain.tools import Tool
+from pydantic import BaseModel, Field
 
-@tool("read_google_sheet")
-def read_google_sheet(settings: dict, spreadsheet_id: str, range_name: str) -> str:
+class GoogleSheetInput(BaseModel):
+    spreadsheet_id: str = Field(description="The unique ID of the Google Sheet to read from.")
+    range_name: str = Field(description="The range of cells to read in A1 notation (e.g., 'Sheet1!A1:B10').")
+
+def _read_sheet_logic(settings: Dict[str, Any], spreadsheet_id: str, range_name: str) -> str:
     """
-    Reads data from a specific range within a Google Sheet.
-
-    Args:
-        settings (dict): A dictionary containing service account credentials from Google Cloud.
-        spreadsheet_id (str): The unique ID of the Google Sheet to read from.
-        range_name (str): The range of cells to read in A1 notation (e.g., 'Sheet1!A1:B10').
-
-    Returns:
-        str: The data from the specified range, formatted as a CSV string.
+    Internal logic to read data from a specific range within a Google Sheet.
     """
     try:
         creds_info = settings
@@ -30,7 +29,6 @@ def read_google_sheet(settings: dict, spreadsheet_id: str, range_name: str) -> s
 
         scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
         creds = service_account.Credentials.from_service_account_info(creds_info, scopes=scopes)
-
         service = build('sheets', 'v4', credentials=creds)
 
         sheet = service.spreadsheets()
@@ -45,13 +43,37 @@ def read_google_sheet(settings: dict, spreadsheet_id: str, range_name: str) -> s
             return f"No data found in range '{range_name}' of spreadsheet '{spreadsheet_id}'."
         
         output_string = "\n".join([",".join(map(str, row)) for row in values])
-        return f"Data from spreadsheet '{spreadsheet_id}', range '{range_name}':\n{output_string}"
+        return f"Successfully read data from spreadsheet '{spreadsheet_id}', range '{range_name}':\n{output_string}"
 
     except HttpError as err:
         if err.resp.status == 403:
-            return f"Error: Permission denied. Make sure the service account has been shared on the Google Sheet '{spreadsheet_id}'."
+            return f"Error: Permission denied. Make sure the service account has been granted access to the Google Sheet with ID '{spreadsheet_id}'."
         if err.resp.status == 404:
             return f"Error: Spreadsheet not found. Please check the spreadsheet_id '{spreadsheet_id}'."
         return f"An API error occurred: {err}"
     except Exception as e:
         return f"An unexpected error occurred: {e}"
+
+def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> Tool:
+    """
+    Creates a configured tool for reading from a Google Sheet.
+    The 'settings' (credentials) are pre-filled and not exposed to the LLM.
+
+    Args:
+        settings (Dict[str, Any]): The connector settings containing credentials.
+        name (str): The dynamic name for the tool instance (e.g., 'google_sheet_quarterly_report').
+
+    Returns:
+        Tool: A LangChain Tool object ready to be used by an agent.
+    """
+    configured_func = partial(_read_sheet_logic, settings)
+    
+    return Tool(
+        name=name,
+        func=configured_func,
+        description=(
+            "Reads data from a specific range within a Google Sheet. "
+            "Provide the spreadsheet_id and the cell range in A1 notation (e.g., 'Sheet1!A1:B10')."
+        ),
+        args_schema=GoogleSheetInput
+    )

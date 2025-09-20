@@ -152,3 +152,5 @@ jobs:
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-api:latest
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-ui:latest
             docker compose --env-file /home/nexa/.env up -d --no-build
+
+            docker image rm $(docker images bmdarklight/nexa-ui -f 'dangling=true' -q)
