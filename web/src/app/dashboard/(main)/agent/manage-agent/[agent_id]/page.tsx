@@ -1,17 +1,16 @@
+"use client";
 
 import React from "react";
+import { useSearchParams } from "next/navigation";
 import EditAgent from "../../components/EditAgent";
 
-interface ManageAgentPageProps {
-  params: {
-    agent_id: string;
-  };
-}
+export default function ManageAgentPage() {
+  const searchParams = useSearchParams();
+  const agentId = searchParams.get("agent_id");
 
-export default async function ManageAgentPage({
-  params,
-}: ManageAgentPageProps) {
-  const { agent_id } = await Promise.resolve(params);
+  if (!agentId) {
+    return <p>آیدی ایجنت پیدا نشد</p>;
+  }
 
-  return <EditAgent agentId={agent_id} />;
+  return <EditAgent agentId={agentId} />;
 }
