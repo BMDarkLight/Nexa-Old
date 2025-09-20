@@ -1,4 +1,4 @@
-"use client"
+"use client";
 import React, { useEffect, useState } from "react";
 import ReturnBtn from "./ReturnBtn";
 import { Button } from "@/components/ui/button";
@@ -16,10 +16,19 @@ interface EditAgentProps {
   agentId: string;
 }
 
+interface AgentData {
+  name: string;
+  description?: string;
+  model?: string;
+  temperature?: number;
+  tools?: string[];
+}
+
 export default function EditAgent({ agentId }: EditAgentProps) {
-  const [name, setName] = useState(""); 
+  const [name, setName] = useState<string>("");
   const router = useRouter();
 
+  // گرفتن اطلاعات ایجنت برای پر کردن input
   useEffect(() => {
     if (!agentId) return;
 
@@ -37,7 +46,7 @@ export default function EditAgent({ agentId }: EditAgentProps) {
         });
 
         if (res.ok) {
-          const data = await res.json();
+          const data: AgentData = await res.json();
           setName(data.name || "");
         } else {
           console.error("خطا در گرفتن اطلاعات ایجنت");
@@ -65,7 +74,7 @@ export default function EditAgent({ agentId }: EditAgentProps) {
         return;
       }
 
-      if (!name || name.trim() === "") {
+      if (!name.trim()) {
         alert("نام ایجنت نمی‌تواند خالی باشد.");
         return;
       }
@@ -87,6 +96,7 @@ export default function EditAgent({ agentId }: EditAgentProps) {
         return;
       }
 
+      // موفقیت → ریدایرکت
       router.push("/dashboard/agent");
     } catch (error) {
       console.error("خطا در ذخیره ایجنت:", error);
@@ -108,7 +118,7 @@ export default function EditAgent({ agentId }: EditAgentProps) {
             type="text"
             placeholder="نام ایجنت"
             value={name}
-            onChange={(e) => setName(e.target.value)} // تغییر مقدار name
+            onChange={(e) => setName(e.target.value)}
           />
         </div>
       </div>
