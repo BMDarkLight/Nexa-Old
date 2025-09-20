@@ -29,7 +29,6 @@ export default function ConnectorCard() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const router = useRouter();
 
-  // گرفتن لیست کانکتورها از API
   useEffect(() => {
     const fetchConnectors = async () => {
       const token = Cookie.get("auth_token");
@@ -64,7 +63,6 @@ export default function ConnectorCard() {
     fetchConnectors();
   }, []);
 
-  // انتخاب لوگو بر اساس connector_type
   const getConnectorLogo = (type: string) => {
     switch (type) {
       case "google_sheet":
@@ -76,12 +74,10 @@ export default function ConnectorCard() {
     }
   };
 
-  // وضعیت اتصال
   const getConnectionStatus = (settings: Record<string, unknown>) => {
     return Object.keys(settings || {}).length === 0 ? "متصل نیست" : "متصل";
   };
 
-  // متن داینامیک بر اساس connector_type
   const getConnectorDescription = (type: string) => {
     switch (type) {
       case "google_sheet":

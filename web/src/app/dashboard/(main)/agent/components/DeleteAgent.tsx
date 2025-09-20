@@ -19,7 +19,7 @@ export default function DeleteAgent({id , onDelete} : TAgentDelete){
       text: "آیا مطمئن هستید که می‌خواهید ایجنت فلان را حذف کنید؟",
       showCancelButton: true,
       cancelButtonText: "انصراف",
-      confirmButtonText: "خروج",
+      confirmButtonText: "حذف",
       reverseButtons : true ,
       customClass : {
         popup : "swal-rtl" ,
