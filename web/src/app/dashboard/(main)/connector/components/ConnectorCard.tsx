@@ -69,6 +69,8 @@ export default function ConnectorCard() {
         return "/Squad/image/card-img.png";
       case "google_drive":
         return "/Squad/image/goole-drive.png";
+      case "source_pdf":
+        return "/Squad/image/pdf-icon.png";
       default:
         return "/Squad/image/card-img.png";
     }
@@ -83,15 +85,19 @@ export default function ConnectorCard() {
       case "google_sheet":
         return "جدول‌های گوگل شیت خود را تحلیل کنید.";
       case "google_drive":
-        return "جدول گوگل درایو خود را تحلیل کنید.";
+        return "فایل‌های گوگل درایو خود را تحلیل کنید.";
+      case "source_pdf":
+        return "فایل‌های PDF خود را آپلود و تحلیل کنید.";
       default:
         return "";
     }
   };
 
-  // هنگام کلیک روی کارت - مسیر dynamic
-  const handleCardClick = (connectorId: string) => {
-    router.push(`/dashboard/connector/manage-connector/${connectorId}`);
+  const handleCardClick = (connectorId: string, connectorType: string) => {
+    // هم آیدی و هم نوع کانکتور رو به URL پاس میدیم
+    router.push(
+      `/dashboard/connector/manage-connector/${connectorId}?type=${connectorType}`
+    );
   };
 
   return (
@@ -110,7 +116,9 @@ export default function ConnectorCard() {
           <Card
             key={connector._id}
             className="w-full cursor-pointer"
-            onClick={() => handleCardClick(connector._id)}
+            onClick={() =>
+              handleCardClick(connector._id, connector.connector_type)
+            }
           >
             <div className="flex">
               <div>

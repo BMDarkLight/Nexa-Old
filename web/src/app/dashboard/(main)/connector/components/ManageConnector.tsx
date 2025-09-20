@@ -1,12 +1,12 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Check } from "lucide-react";
 import Cookie from "js-cookie";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 
 const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
@@ -14,11 +14,16 @@ const API_Base_Url =
 export default function ManageConnector() {
   const router = useRouter();
   const params = useParams();
-  const connectorId = params.connectorId;
+  const searchParams = useSearchParams();
+  const connectorId = params.connectorId as string;
+  const connectorTypeFromUrl = searchParams.get("type");
 
   const [name, setName] = useState("");
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // 📌 برای دسترسی به فایل انتخاب شده
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const fetchConnector = async () => {
@@ -50,6 +55,7 @@ export default function ManageConnector() {
         const types: string[] = [];
         if (data.connector_type === "google_sheet") types.push("google_sheet");
         if (data.connector_type === "google_drive") types.push("google_drive");
+        if (data.connector_type === "source_pdf") types.push("source_pdf");
 
         if (Array.isArray(data.connector_type)) {
           data.connector_type.forEach((type: string) => types.push(type));
@@ -83,6 +89,7 @@ export default function ManageConnector() {
     }
 
     try {
+      // مرحله اول: بروزرسانی اطلاعات کانکتور
       const res = await fetch(`${API_Base_Url}/connectors/${connectorId}`, {
         method: "PUT",
         headers: {
@@ -91,7 +98,10 @@ export default function ManageConnector() {
         },
         body: JSON.stringify({
           name,
-          connector_type: selectedConnectors.length === 1 ? selectedConnectors[0] : selectedConnectors,
+          connector_type:
+            selectedConnectors.length === 1
+              ? selectedConnectors[0]
+              : selectedConnectors,
         }),
       });
 
@@ -100,6 +110,32 @@ export default function ManageConnector() {
         console.error("خطا در آپدیت کانکتور:", errorData);
         alert("خطا در ذخیره تغییرات");
         return;
+      }
+
+      // مرحله دوم: اگر کانکتور PDF بود → فایل آپلود شود
+      if (connectorTypeFromUrl === "source_pdf" && fileInputRef.current?.files?.length) {
+        const file = fileInputRef.current.files[0];
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const uploadRes = await fetch(
+          `${API_Base_Url}/connectors/${connectorId}/upload`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `${tokenType} ${token}`,
+              // ⚠️ نیازی به Content-Type نیست، خود مرورگر تنظیم می‌کند
+            },
+            body: formData,
+          }
+        );
+
+        if (!uploadRes.ok) {
+          const errorData = await uploadRes.json();
+          console.error("خطا در آپلود فایل:", errorData);
+          alert("خطا در آپلود فایل PDF");
+          return;
+        }
       }
 
       alert("تغییرات با موفقیت ذخیره شد");
@@ -134,9 +170,9 @@ export default function ManageConnector() {
           />
         </div>
 
-        <div className="w-full flex flex-col gap-2">
-          <Label className="mb-2">نوع اتصال</Label>
-          <div className="flex gap-5">
+        {connectorTypeFromUrl === "google_sheet" && (
+          <div className="w-full flex flex-col gap-2">
+            <Label className="mb-2">نوع اتصال (گوگل شیت)</Label>
             <div className="flex items-center gap-2">
               <Checkbox
                 checked={selectedConnectors.includes("google_sheet")}
@@ -144,7 +180,12 @@ export default function ManageConnector() {
               />
               <span>گوگل شیت</span>
             </div>
+          </div>
+        )}
 
+        {connectorTypeFromUrl === "google_drive" && (
+          <div className="w-full flex flex-col gap-2">
+            <Label className="mb-2">نوع اتصال (گوگل درایو)</Label>
             <div className="flex items-center gap-2">
               <Checkbox
                 checked={selectedConnectors.includes("google_drive")}
@@ -153,7 +194,19 @@ export default function ManageConnector() {
               <span>گوگل درایو</span>
             </div>
           </div>
-        </div>
+        )}
+
+        {connectorTypeFromUrl === "source_pdf" && (
+          <div className="w-full flex flex-col gap-2">
+            <Label className="mb-2">آپلود فایل PDF</Label>
+            <Input
+              ref={fileInputRef}
+              id="pdf-upload"
+              type="file"
+              accept="application/pdf"
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end items-center gap-3">

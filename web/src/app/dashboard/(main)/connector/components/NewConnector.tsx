@@ -3,9 +3,7 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Check } from "lucide-react";
-import ReturnBtn from "../../agent/components/ReturnBtn";
 import Cookie from "js-cookie";
 import { useRouter } from "next/navigation";
 
@@ -16,64 +14,54 @@ const End_point = "/connectors";
 export default function NewConnector() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [selectedConnectors, setSelectedConnectors] = useState<string[]>([]);
-
-  const handleCheckboxChange = (value: string) => {
-    if (selectedConnectors.includes(value)) {
-      setSelectedConnectors(selectedConnectors.filter((v) => v !== value));
-    } else {
-      setSelectedConnectors([...selectedConnectors, value]);
-    }
-  };
+  const [selectedConnector, setSelectedConnector] = useState<string>("");
 
   const handleSubmit = async () => {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
 
-    if (!token || selectedConnectors.length === 0 || !name) {
-      alert("لطفا نام اتصال و حداقل یک نوع اتصال را انتخاب کنید");
+    if (!token || !selectedConnector || !name) {
+      alert("لطفا نام اتصال و یک نوع اتصال را انتخاب کنید");
       return;
     }
 
     try {
-      for (const connectorType of selectedConnectors) {
-        const res = await fetch(`${API_Base_Url}${End_point}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `${tokenType} ${token}`,
-          },
-          body: JSON.stringify({
-            name,
-            connector_type: connectorType,
-            settings: {},
-          }),
-        });
+      const res = await fetch(`${API_Base_Url}${End_point}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `${tokenType} ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          connector_type: selectedConnector,
+          settings: {},
+        }),
+      });
 
-        if (!res.ok) {
-          const errorData = await res.json();
-          console.error("خطا در ایجاد کانکتور:", errorData);
+      if (!res.ok) {
+        const errorData = await res.json();
+        console.error("خطا در ایجاد کانکتور:", errorData);
 
-          if (
-            errorData?.detail &&
-            typeof errorData.detail === "string" &&
-            errorData.detail.toLowerCase().includes("duplicate")
-          ) {
-            alert(
-              "این نام برای اتصال خود قبلا استفاده شده است. لطفا نام دیگری را انتخاب کنید"
-            );
-          } else {
-            alert("این نام برای اتصال خود قبلا استفاده شده است. لطفا نام دیگری را انتخاب کنید");
-          }
-
-          return;
+        if (
+          errorData?.detail &&
+          typeof errorData.detail === "string" &&
+          errorData.detail.toLowerCase().includes("duplicate")
+        ) {
+          alert(
+            "این نام برای اتصال خود قبلا استفاده شده است. لطفا نام دیگری را انتخاب کنید"
+          );
+        } else {
+          alert("این نام برای اتصال خود قبلا استفاده شده است. لطفا نام دیگری را انتخاب کنید");
         }
+
+        return;
       }
 
       router.push("/dashboard/connector");
     } catch (err) {
       console.error(err);
-      alert("خطا در ایجاد کانکتورها");
+      alert("خطا در ایجاد اتصال");
     }
   };
 
@@ -99,22 +87,39 @@ export default function NewConnector() {
 
         <div className="w-full flex flex-col gap-2">
           <Label className="mb-2">نوع اتصال</Label>
-          <div className="flex gap-5">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={selectedConnectors.includes("google_sheet")}
-                onCheckedChange={() => handleCheckboxChange("google_sheet")}
+          <div className="flex flex-col gap-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="connector_type"
+                value="google_sheet"
+                checked={selectedConnector === "google_sheet"}
+                onChange={(e) => setSelectedConnector(e.target.value)}
               />
               <span>گوگل شیت</span>
-            </div>
+            </label>
 
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={selectedConnectors.includes("google_drive")}
-                onCheckedChange={() => handleCheckboxChange("google_drive")}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="connector_type"
+                value="google_drive"
+                checked={selectedConnector === "google_drive"}
+                onChange={(e) => setSelectedConnector(e.target.value)}
               />
               <span>گوگل درایو</span>
-            </div>
+            </label>
+
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="connector_type"
+                value="source_pdf"
+                checked={selectedConnector === "source_pdf"}
+                onChange={(e) => setSelectedConnector(e.target.value)}
+              />
+              <span>فایل PDF</span>
+            </label>
           </div>
         </div>
       </div>
