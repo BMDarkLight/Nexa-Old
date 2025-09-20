@@ -34,8 +34,11 @@ def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
 
 def _read_pdf_logic(settings: Dict[str, Any], query: str) -> str:
     """
-    Internal logic to find and return the most relevant text chunk from a stored PDF embedding.
+    Internal logic to find and return the most relevant text chunks from a stored PDF embedding.
     """
+    TOP_K = 3
+    SIMILARITY_THRESHOLD = 0.75
+
     if not knowledge_db:
         return "Error: Database connection for the knowledge base is not available."
 
@@ -53,20 +56,22 @@ def _read_pdf_logic(settings: Dict[str, Any], query: str) -> str:
 
     query_embedding = embedding_model.embed_query(query)
 
-    best_chunk_text = None
-    highest_similarity = -1.0
-
+    all_chunks = []
     for chunk in source_document.get("chunks", []):
         if "text" in chunk and "embedding" in chunk:
             similarity = _cosine_similarity(query_embedding, chunk["embedding"])
-            if similarity > highest_similarity:
-                highest_similarity = similarity
-                best_chunk_text = chunk["text"]
+            all_chunks.append({"text": chunk["text"], "score": similarity})
 
-    if best_chunk_text:
-        return f"Found relevant information in the document:\n---\n{best_chunk_text}\n---"
-    else:
+    sorted_chunks = sorted(all_chunks, key=lambda x: x["score"], reverse=True)
+
+    top_chunks = [chunk for chunk in sorted_chunks if chunk["score"] >= SIMILARITY_THRESHOLD][:TOP_K]
+
+    if not top_chunks:
         return "Could not find any relevant information in the document for that query."
+
+    combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
+    
+    return f"Found relevant information in the document:\n\n{combined_context}"
 
 def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> Tool:
     """

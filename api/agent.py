@@ -15,6 +15,7 @@ from api.tools.web import search_web
 from api.tools.google_sheet import get_google_sheet_tool
 from api.tools.google_drive import get_google_drive_tool
 from api.tools.pdf_source import get_pdf_source_tool
+from api.tools.uri_source import get_uri_source_tool
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -27,7 +28,8 @@ Tools = Literal[
 Connectors = Literal[
     "google_sheet",
     "google_drive",
-    "source_pdf"
+    "source_pdf",
+    "source_uri"
 ]
 
 Models = Literal[
@@ -174,7 +176,8 @@ async def get_agent_components(
         tool_factory_map = {
             "google_sheet": get_google_sheet_tool,
             "google_drive": get_google_drive_tool,
-            "source_pdf": get_pdf_source_tool
+            "source_pdf": get_pdf_source_tool,
+            "source_uri": get_uri_source_tool
         }
 
         connector_ids = selected_agent.get("connector_ids", [])
