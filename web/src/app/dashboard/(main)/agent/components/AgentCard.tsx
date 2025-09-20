@@ -50,8 +50,8 @@ const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
 const End_point = "/agents";
 
-export default function AgentCard({ agent }: { agent: { _id: string; name: string } }) {
-  const router = useRouter();
+export default function AgentCard() {
+  const route = useRouter();
   const [agents, setAgents] = useState<Agents[]>([]);
   const [loading, setLoading] = useState(true);
   const [agentConnectors, setAgentConnectors] = useState<
@@ -114,9 +114,6 @@ export default function AgentCard({ agent }: { agent: { _id: string; name: strin
 
     fetchAgents();
   }, []);
-  const handleEdit = () => {
-    router.push(`/dashboard/agent/manage-agent?agent_id=${agent._id}`);
-  };
 
   return (
     <>
@@ -194,8 +191,6 @@ export default function AgentCard({ agent }: { agent: { _id: string; name: strin
                     <CardFooter className="w-full">
                       <Button
                         className="cursor-pointer bg-transparent border-1 text-black w-full hover:text-secondary mt-2"
-                        onClick={handleEdit
-                        }
                       >
                         ویرایش
                       </Button>
