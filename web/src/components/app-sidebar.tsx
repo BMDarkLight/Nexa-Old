@@ -81,7 +81,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       });
 
       if (!res.ok) {
-        alert("خطا در بارگذاری گفتگوها. لطفاً دوباره تلاش کنید");
+        
         return;
       }
 
@@ -119,7 +119,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           cache: "no-store",
         });
         if (!res.ok) {
-          alert("خطا در دریافت اطلاعات کاربر");
+          
           return;
         }
         const data: UserData[] = await res.json();

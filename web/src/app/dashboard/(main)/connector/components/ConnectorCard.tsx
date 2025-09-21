@@ -58,7 +58,7 @@ export default function ConnectorCard() {
 
         if (!res.ok) {
           alert(
-            "خطا در بارگذاری اطلاعات کانکتورها. لطفاً دوباره تلاش کنید"
+            
           );
           return;
         }
@@ -67,7 +67,7 @@ export default function ConnectorCard() {
         setConnectors(data);
       } catch {
         alert(
-          "خطا در بارگذاری اطلاعات کانکتورها. لطفاً دوباره تلاش کنید"
+          
         );
       }
     };

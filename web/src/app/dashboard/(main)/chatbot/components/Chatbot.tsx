@@ -89,13 +89,13 @@ export default function Chatbot() {
         });
 
         if (res.status === 401) {
-          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
           router.push("/login");
           return;
         }
 
         if (!res.ok) {
-          alert("خطا در دریافت اطلاعات کاربر");
+          
           return;
         }
 
@@ -104,7 +104,7 @@ export default function Chatbot() {
           setUsername(data[0].username || "کاربر");
         }
       } catch {
-        alert("خطا در دریافت اطلاعات کاربر");
+        
       }
     };
     fetchUser();
@@ -123,7 +123,7 @@ export default function Chatbot() {
         });
 
         if (res.status === 401) {
-          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
           router.push("/login");
           return;
         }
@@ -166,7 +166,7 @@ export default function Chatbot() {
         }
 
         if (!res.ok) {
-          alert("خطا در دریافت تاریخچه گفتگو");
+          
           return;
         }
 
@@ -189,7 +189,7 @@ export default function Chatbot() {
 
         scrollToBottom();
       } catch {
-        alert("خطا در دریافت تاریخچه گفتگو");
+       
       }
     };
 
@@ -230,7 +230,7 @@ export default function Chatbot() {
       });
 
       if (response.status === 401) {
-        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
         router.push("/login");
         return;
       }
@@ -465,7 +465,7 @@ export default function Chatbot() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="داده‌ها را متصل کنید و گفت‌وگو را شروع کنید!"
           onKeyPress={handleKeyPress}
-          className="pt-18 pb-5"
+          className="pt-18 pb-5 text-xs md:text-base"
         />
         <button
           type="button"

@@ -44,12 +44,16 @@ interface Connector {
 const connectorIcons: Record<string, { name: string; src: string }> = {
   google_sheet: { name: "Google Sheet", src: "/Squad/image/card-img.png" },
   google_drive: { name: "Google Drive", src: "/Squad/image/goole-drive.png" },
+  source_pdf: { name: "PDF", src: "/Squad/image/card-img.png" },
 };
 
 const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
+
+// ✅ برای چک کردن اعتبار توکن از اندپوینت users استفاده می‌کنیم
+const VALIDATE_ENDPOINT = "/users";
 
 export default function AgentCard() {
   const router = useRouter();
@@ -60,7 +64,7 @@ export default function AgentCard() {
   >({});
 
   useEffect(() => {
-    async function fetchAgents() {
+    async function checkTokenAndFetchAgents() {
       try {
         const token = Cookie.get("auth_token");
         const tokenType = Cookie.get("token_type");
@@ -68,7 +72,22 @@ export default function AgentCard() {
         if (!token || !tokenType) {
           alert("ابتدا وارد حساب کاربری خود شوید");
           router.push("/login");
-          setLoading(false);
+          return;
+        }
+
+        const validateRes = await fetch(
+          `${API_Base_Url}:${API_PORT}${VALIDATE_ENDPOINT}`,
+          {
+            headers: {
+              Authorization: `${tokenType} ${token}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        if (!validateRes.ok) {
+          alert("مدت زمان اعتبار توکن شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
           return;
         }
 
@@ -81,7 +100,6 @@ export default function AgentCard() {
         if (res.status === 401) {
           alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
           router.push("/login");
-          setLoading(false);
           return;
         }
 
@@ -114,21 +132,21 @@ export default function AgentCard() {
                 }));
               }
             } catch {
-              alert("کانکتوری برای ایجنت ها یافت نشد");
+              // اینجا می‌تونی لاگ خطا بذاری
             }
           });
         } else {
-          alert("مشکل از سمت سرور است");
+          
         }
       } catch {
-        alert("خطا در گرفتن لیست لطفا دوباره تلاش کنید");
+        alert("خطا در برقراری ارتباط با سرور");
       } finally {
         setLoading(false);
       }
     }
 
-    fetchAgents();
-  }, []);
+    checkTokenAndFetchAgents();
+  }, [router]);
 
   return (
     <>
@@ -142,40 +160,51 @@ export default function AgentCard() {
           </Link>
         </div>
         <div className="flex justify-between flex-wrap gap-5 md:grid lg:grid-cols-3 md:grid-cols-2 lg:gap-2">
-          {agents.map((agent) => (
-            <Card className="w-full text-center" key={agent._id}>
-              <div>
+          {agents.map((agent) => {
+            const connectors = agentConnectors[agent._id] || [];
+            const hasActiveConnector = connectors.some(
+              (c) => c.settings && Object.keys(c.settings).length > 0
+            );
+
+            return (
+              <Card className="w-full text-center" key={agent._id}>
                 <div>
-                  <CardHeader className="flex flex-col items-center relative">
-                    <DeleteAgent
-                      id={agent._id}
-                      onDelete={(deletid) =>
-                        setAgents((prev) =>
-                          prev.filter((a) => a._id !== deletid)
-                        )
-                      }
-                    />
-                    <div className="w-[72px] h-[72px] rounded-full flex justify-center items-center bg-card-foreground text-primary-foreground my-2">
-                      <Bot size={50} />
-                    </div>
-                    <CardTitle className="sm:text-base font-medium text-sm">
-                      {agent.name}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="my-2">
-                    <div className="flex justify-between text-xs md:text-sm mb-3">
-                      <p className="">وضعیت</p>
-                      <Badge className="bg-[#0596691A] text-[#047857]">
-                        فعال
-                      </Badge>
-                    </div>
-                    <div className="flex justify-between text-xs md:text-sm">
-                      <p>اتصالات</p>
-                      <div>
-                        <TooltipProvider>
-                          <div className="flex flex-row-reverse -space-x-1">
-                            {(agentConnectors[agent._id] || []).map(
-                              (connector, index) => {
+                  <div>
+                    <CardHeader className="flex flex-col items-center relative">
+                      <DeleteAgent
+                        id={agent._id}
+                        onDelete={(deletid) =>
+                          setAgents((prev) =>
+                            prev.filter((a) => a._id !== deletid)
+                          )
+                        }
+                      />
+                      <div className="w-[72px] h-[72px] rounded-full flex justify-center items-center bg-card-foreground text-primary-foreground my-2">
+                        <Bot size={50} />
+                      </div>
+                      <CardTitle className="sm:text-base font-medium text-sm">
+                        {agent.name}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="my-2">
+                      <div className="flex justify-between text-xs md:text-sm mb-3">
+                        <p className="">وضعیت</p>
+                        <Badge
+                          className={
+                            hasActiveConnector
+                              ? "bg-[#0596691A] text-[#047857]"
+                              : "bg-[#DC26261A] text-[#DC2626]"
+                          }
+                        >
+                          {hasActiveConnector ? "فعال" : "فعال نیست"}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between text-xs md:text-sm">
+                        <p>اتصالات</p>
+                        <div>
+                          <TooltipProvider>
+                            <div className="flex flex-row-reverse -space-x-1">
+                              {connectors.map((connector, index) => {
                                 const connData =
                                   connectorIcons[connector.connector_type];
                                 if (!connData) return null;
@@ -195,27 +224,31 @@ export default function AgentCard() {
                                     </TooltipContent>
                                   </Tooltip>
                                 );
-                              }
-                            )}
-                          </div>
-                        </TooltipProvider>
+                              })}
+                            </div>
+                          </TooltipProvider>
+                        </div>
                       </div>
+                    </CardContent>
+                    <div>
+                      <CardFooter className="w-full">
+                        <Button
+                          className="cursor-pointer bg-transparent border-1 text-black w-full hover:text-secondary mt-2"
+                          onClick={() =>
+                            router.push(
+                              `/dashboard/agent/manage-agent/${agent._id}`
+                            )
+                          }
+                        >
+                          ویرایش
+                        </Button>
+                      </CardFooter>
                     </div>
-                  </CardContent>
-                  <div>
-                    <CardFooter className="w-full">
-                      <Button
-                        className="cursor-pointer bg-transparent border-1 text-black w-full hover:text-secondary mt-2"
-                        onClick={() => router.push(`/dashboard/agent/manage-agent/${agent._id}`)}
-                      >
-                        ویرایش
-                      </Button>
-                    </CardFooter>
                   </div>
                 </div>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       </div>
     </>

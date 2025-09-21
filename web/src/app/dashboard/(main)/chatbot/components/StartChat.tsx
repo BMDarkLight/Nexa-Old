@@ -69,13 +69,13 @@ export default function StartChat() {
         }
 
         if (!res.ok) {
-          alert("خطا در دریافت لیست ایجنت‌ها. لطفاً دوباره تلاش کنید");
+          
           return;
         }
         const data: Agent[] = await res.json();
         setAgents(data);
       } catch {
-        alert("خطا در دریافت لیست ایجنت‌ها. لطفاً دوباره تلاش کنید");
+        
       }
     };
     fetchAgents();
@@ -83,7 +83,7 @@ export default function StartChat() {
 
   const handleSend = async () => {
     if (!query || !authHeader) {
-      alert("لطفاً یک پرسش وارد کنید");
+      alert("لطفاً یک پیام وارد کنید");
       return;
     }
 
@@ -103,13 +103,13 @@ export default function StartChat() {
       });
 
       if (res.status === 401) {
-        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
         router.push("/login");
         return;
       }
 
       if (!res.ok) {
-        alert("خطا در ارسال پرسش. لطفاً دوباره تلاش کنید");
+        alert("خطا در ارسال پرسش");
         return;
       }
 
@@ -175,7 +175,7 @@ export default function StartChat() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="داده‌ها را متصل کنید و گفت‌وگو را شروع کنید!"
             onKeyPress={handleKeyPress}
-            className="pt-18 pb-5"
+            className="pt-18 pb-5 text-xs md:text-base"
           />
 
           <button
