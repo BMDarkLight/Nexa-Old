@@ -25,7 +25,6 @@ def auth_header(token):
 def test_public_endpoints():
     """Tests that public-facing endpoints are accessible without a token."""
     assert client.get("/").status_code == 200
-    assert client.get("/login").status_code == 200
     assert client.post("/signin", data={"username": "dne", "password": "dne"}).status_code == 401
 
 def test_user_signup_creates_prospective_user():

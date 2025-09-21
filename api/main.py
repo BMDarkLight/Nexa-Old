@@ -56,7 +56,7 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    public_paths = {"/signin", "/signup", "/login", "/", "/forgot-password", "/reset-password", "/check-reset-token", "/invite/signup/{username}"}
+    public_paths = {"/signin", "/signup", "/test-cors", "/", "/forgot-password", "/reset-password", "/check-reset-token", "/invite/signup/{username}"}
     for path_name, path in openapi_schema["paths"].items():
         if path_name in public_paths:
             continue
@@ -117,21 +117,9 @@ async def main_page():
 
     return HTMLResponse(content=html_content)
 
-# --- Embedded Login Page ---
-@app.get("/login", response_class=HTMLResponse)
-def login():
-    with open("api/pages/login.html", "r", encoding="utf-8") as f:
-        html_content = f.read()
-
-    return HTMLResponse(content=html_content)
-
-# --- Embedded Chatbot Page ---
-@app.get("/chatbot", response_class=HTMLResponse)
-def chatbot():
-    with open("api/pages/chatbot.html", "r", encoding="utf-8") as f:
-        html_content = f.read()
-
-    return HTMLResponse(content=html_content)
+@app.get("/test-cors")
+async def test_cors():
+    return JSONResponse({"message": "CORS check"})
 
 # --- Authentication Routes ---
 class SignupModel(BaseModel):
