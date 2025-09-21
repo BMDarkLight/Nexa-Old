@@ -8,25 +8,35 @@ import Cookie from "js-cookie";
 import { useRouter } from "next/navigation";
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point = "/connectors";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function NewConnector() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [selectedConnector, setSelectedConnector] = useState<string>("");
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
 
-    if (!token || !selectedConnector || !name) {
+    if (!token) {
+      alert("ابتدا وارد حساب کاربری خود شوید");
+      router.push("/login");
+      return;
+    }
+
+    if (!selectedConnector || !name) {
       alert("لطفا نام اتصال و یک نوع اتصال را انتخاب کنید");
       return;
     }
 
     try {
-      const res = await fetch(`${API_Base_Url}${End_point}`, {
+      setLoading(true);
+
+      const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -39,9 +49,14 @@ export default function NewConnector() {
         }),
       });
 
+      if (res.status === 401) {
+        alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
+        return;
+      }
+
       if (!res.ok) {
         const errorData = await res.json();
-        console.error("خطا در ایجاد کانکتور:", errorData);
 
         if (
           errorData?.detail &&
@@ -49,19 +64,21 @@ export default function NewConnector() {
           errorData.detail.toLowerCase().includes("duplicate")
         ) {
           alert(
-            "این نام برای اتصال خود قبلا استفاده شده است. لطفا نام دیگری را انتخاب کنید"
+            "این نام برای اتصال قبلا استفاده شده است. لطفا نام دیگری را انتخاب کنید"
           );
         } else {
-          alert("این نام برای اتصال خود قبلا استفاده شده است. لطفا نام دیگری را انتخاب کنید");
+          alert("خطا در ایجاد اتصال. لطفا دوباره تلاش کنید");
         }
 
         return;
       }
 
+      alert("کانکتور با موفقیت ایجاد شد");
       router.push("/dashboard/connector");
-    } catch (err) {
-      console.error(err);
-      alert("خطا در ایجاد اتصال");
+    } catch {
+      alert("خطا در ایجاد اتصال. لطفا دوباره تلاش کنید");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -87,7 +104,7 @@ export default function NewConnector() {
 
         <div className="w-full flex flex-col gap-2">
           <Label className="mb-2">نوع اتصال</Label>
-          <div className="flex flex-col gap-3">
+          <div className="flex gap-3">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="radio"
@@ -128,8 +145,9 @@ export default function NewConnector() {
         <Button
           className="cursor-pointer flex-1 md:flex-0"
           onClick={handleSubmit}
+          disabled={loading}
         >
-          ذخیره <Check />
+          {loading ? "در حال ذخیره..." : "ذخیره"} <Check />
         </Button>
       </div>
     </div>

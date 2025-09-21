@@ -1,5 +1,5 @@
 "use client"
-import React from "react";
+import React, { useState } from "react";
 import ReturnBtn from "./ReturnBtn";
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
@@ -12,20 +12,25 @@ import Cookie from "js-cookie";
 const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
 const End_point = "/agents";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function NameAgentCom() {
   const { agent, setField } = useAgent();
   const router = useRouter();
+  const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    try {
-      const token = Cookie.get("auth_token");
-      const tokenType = Cookie.get("token_type") ?? "Bearer";
+    const token = Cookie.get("auth_token");
+    const tokenType = Cookie.get("token_type") ?? "Bearer";
 
-      if (!token) {
-        console.error("توکن در کوکی پیدا نشد");
-        return;
-      }
+    if (!token) {
+      alert("ابتدا وارد حساب کاربری خود شوید");
+      router.push("/login");
+      return;
+    }
+
+    try {
+      setSaving(true);
 
       const payload = {
         name: agent.name,
@@ -35,7 +40,7 @@ export default function NameAgentCom() {
         tools: agent.tools ?? [],
       };
 
-      const res = await fetch(`${API_Base_Url}${End_point}`, {
+      const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
         method: "POST",
         headers: {
           Authorization: `${tokenType} ${token}`,
@@ -44,9 +49,14 @@ export default function NameAgentCom() {
         body: JSON.stringify(payload),
       });
 
+      if (res.status === 401) {
+        alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
+        return;
+      }
+
       if (!res.ok) {
-        const data = await res.json();
-        console.error("خطا در ایجاد ایجنت:", data.detail);
+        alert( "خطا در ایجاد ایجنت. لطفا دوباره تلاش کنید");
         return;
       }
 
@@ -55,37 +65,35 @@ export default function NameAgentCom() {
 
       if (agent.connector_ids && agent.connector_ids.length > 0) {
         for (const connectorId of agent.connector_ids) {
-          try {
-            const connectorRes = await fetch(
-              `${API_Base_Url}${End_point}/${agentId}/connectors/${connectorId}`,
-              {
-                method: "POST",
-                headers: {
-                  Authorization: `${tokenType} ${token}`,
-                  "Content-Type": "application/json",
-                },
-              }
-            );
-
-            if (!connectorRes.ok) {
-              const errorData = await connectorRes.json();
-              console.error(
-                `خطا در افزودن کانکتور ${connectorId} به ایجنت:`,
-                errorData.detail
-              );
+          const connectorRes = await fetch(
+            `${API_Base_Url}:${API_PORT}${End_point}/${agentId}/connectors/${connectorId}`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `${tokenType} ${token}`,
+                "Content-Type": "application/json",
+              },
             }
-          } catch (err) {
-            console.error(
-              `اشکال در افزودن کانکتور ${connectorId} به ایجنت:`,
-              err
-            );
+          );
+
+          if (connectorRes.status === 401) {
+            alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+            router.push("/login");
+            return;
+          }
+
+          if (!connectorRes.ok) {
+            alert("خطا در افزودن یکی از کانکتورها. لطفا دوباره تلاش کنید");
           }
         }
       }
 
+      alert("ایجنت با موفقیت ذخیره شد");
       router.push("/dashboard/agent");
-    } catch (error) {
-      console.error("خطا در ذخیره ایجنت:", error);
+    } catch {
+      alert("خطا در ذخیره ایجنت. لطفا دوباره تلاش کنید");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -95,7 +103,7 @@ export default function NameAgentCom() {
         <h2 className="text-xl font-medium mt-5 md:mt-0">
           اطلاعات ایجنت را وارد کنید
         </h2>
-        <div className="w-full md:w-[80%]">
+        <div className="w-full">
           <Label htmlFor="name-agent" className="mb-3">
             نام ایجنت
           </Label>
@@ -114,8 +122,9 @@ export default function NameAgentCom() {
         <Button
           className="cursor-pointer flex-1 md:flex-0"
           onClick={handleSave}
+          disabled={saving}
         >
-          ذخیره <Check />
+          {saving ? "در حال ذخیره..." : "ذخیره"} <Check />
         </Button>
       </div>
     </div>

@@ -23,7 +23,8 @@ interface Connector {
 }
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function ConnectorCard() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
@@ -35,12 +36,13 @@ export default function ConnectorCard() {
       const tokenType = Cookie.get("token_type") ?? "Bearer";
 
       if (!token) {
-        console.error("توکن‌ها در کوکی یافت نشدند.");
+        alert("ابتدا وارد حساب کاربری خود شوید");
+        router.push("/login");
         return;
       }
 
       try {
-        const res = await fetch(`${API_Base_Url}/connectors`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}/connectors`, {
           method: "GET",
           headers: {
             Authorization: `${tokenType} ${token}`,
@@ -48,20 +50,30 @@ export default function ConnectorCard() {
           },
         });
 
+        if (res.status === 401) {
+          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
         if (!res.ok) {
-          console.error("Failed to fetch connectors");
+          alert(
+            "خطا در بارگذاری اطلاعات کانکتورها. لطفاً دوباره تلاش کنید"
+          );
           return;
         }
 
         const data: Connector[] = await res.json();
         setConnectors(data);
-      } catch (err) {
-        console.error("Error fetching connectors:", err);
+      } catch {
+        alert(
+          "خطا در بارگذاری اطلاعات کانکتورها. لطفاً دوباره تلاش کنید"
+        );
       }
     };
 
     fetchConnectors();
-  }, []);
+  }, [router]);
 
   const getConnectorLogo = (type: string) => {
     switch (type) {
@@ -70,7 +82,7 @@ export default function ConnectorCard() {
       case "google_drive":
         return "/Squad/image/goole-drive.png";
       case "source_pdf":
-        return "/Squad/image/pdf-icon.png";
+        return "/Squad/image/card-img.png";
       default:
         return "/Squad/image/card-img.png";
     }
@@ -94,7 +106,6 @@ export default function ConnectorCard() {
   };
 
   const handleCardClick = (connectorId: string, connectorType: string) => {
-    // هم آیدی و هم نوع کانکتور رو به URL پاس میدیم
     router.push(
       `/dashboard/connector/manage-connector/${connectorId}?type=${connectorType}`
     );
@@ -106,7 +117,8 @@ export default function ConnectorCard() {
         <h2 className="text-xl font-medium">لیست اتصالات</h2>
         <Link href="connector/new-connector">
           <Button className="cursor-pointer text-xs md:text-sm">
-            اتصال جدید<Plus />
+            اتصال جدید
+            <Plus />
           </Button>
         </Link>
       </div>

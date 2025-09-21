@@ -26,7 +26,8 @@ const schema = Yup.object({
 
 type FormValues = Yup.InferType<typeof schema>;
 
-const API_Base_Url = process.env.API_BASE_URL ?? "http://62.60.198.4:8000";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000" ;
 const End_point = "/reset-password";
 
 export default function ResetPasswordCom() {
@@ -52,7 +53,7 @@ export default function ResetPasswordCom() {
 
   async function onSubmit(data: FormValues) {
     try {
-      const respond = await fetch(`${API_Base_Url}${End_point}`, {
+      const respond = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
         method: "POST",
         headers: { "Content-type": "application/json" },
         body: JSON.stringify({
@@ -62,14 +63,12 @@ export default function ResetPasswordCom() {
         }),
       });
       // error handeling
-      const errorDetail = await respond.json()
       if (!respond.ok) {
         Swal.fire({
           icon: "error",
           title: "خطا",
           text: "خطا به وجود آمد",
         });
-        console.log(errorDetail);
         return;
       }
       Swal.fire({ icon: "success", title: "موفقیت"  , confirmButtonText : "بازگشت به صفحه ورود"}).then((result)=>{
@@ -78,9 +77,7 @@ export default function ResetPasswordCom() {
           }
       });
     } catch(err) {
-      console.log("خطایی رخ داده است");
-      console.error(err);
-      
+      alert("خطایی رخ داده است")
     }
   }
 

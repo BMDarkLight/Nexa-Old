@@ -2,13 +2,11 @@
 
 import {
   ChevronLeft,
-  ChevronRight,
-  DeleteIcon,
   Edit,
-  Trash,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { usePathname } from "next/navigation";
 
 import {
   Collapsible,
@@ -17,7 +15,6 @@ import {
 } from "@/components/ui/collapsible";
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -25,6 +22,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 
 export function NavMain({
   items,
@@ -38,11 +36,13 @@ export function NavMain({
     items?: {
       title: string;
       url: string;
-      id: string ;
+      id: string;
     }[];
   }[];
-  onDelete?: (sessionId:string) => void
+  onDelete?: (sessionId: string) => void;
 }) {
+  const pathname = usePathname();
+
   return (
     <SidebarGroup>
       <SidebarMenu>
@@ -66,32 +66,50 @@ export function NavMain({
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <SidebarMenuSub>
-                  {item.items?.map((subItem) => (
-                    <SidebarMenuSubItem key={subItem.title}>
-                      <SidebarMenuSubButton asChild className="text-[#71717A]">
-                        <div className="flex justify-between items-center text-base">
-                          <div className="hover:text-sidebar-accent-foreground active:text-sidebar-accent-foreground">
-                            <a href={subItem.url}>
-                              <span>{subItem.title}</span>
-                            </a>
+                  {item.items?.map((subItem) => {
+                    const isActive = pathname === subItem.url;
+                    return (
+                      <SidebarMenuSubItem key={subItem.id}>
+                        <SidebarMenuSubButton
+                          asChild
+                          className={cn(
+                            "text-[#71717A]",
+                            isActive &&
+                              "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground rounded-md"
+                          )}
+                        >
+                          <div className="flex justify-between items-center text-base">
+                            <div className="hover:text-sidebar-accent-foreground active:text-sidebar-accent-foreground">
+                              <a href={subItem.url}>
+                                <span>{subItem.title}</span>
+                              </a>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <a
+                                href="#"
+                                className="hover:text-green-400"
+                                onClick={(e) => e.preventDefault()}
+                              >
+                                <Edit size={18} />
+                              </a>
+                              <a
+                                href="#"
+                                className="hover:text-red-400"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  if (onDelete && subItem.id) {
+                                    onDelete(subItem.id);
+                                  }
+                                }}
+                              >
+                                <Trash2 size={18} />
+                              </a>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <a href="" className="hover:text-green-400">
-                              <Edit size={18} />
-                            </a>
-                            <a href="#" className="hover:text-red-400" onClick={(e)=>{
-                              e.preventDefault()
-                              if(onDelete && subItem.id){
-                                onDelete(subItem.id)
-                              }
-                            }}>
-                              <Trash2 size={18} />
-                            </a>
-                          </div>
-                        </div>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  ))}
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    );
+                  })}
                 </SidebarMenuSub>
               </CollapsibleContent>
             </SidebarMenuItem>

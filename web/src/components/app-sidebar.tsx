@@ -49,7 +49,8 @@ interface UserData {
 }
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 const End_point = "/sessions";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -60,7 +61,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
   const router = useRouter();
 
-  // ✅ گرفتن کوکی‌ها بعد از mount
   React.useEffect(() => {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
@@ -72,7 +72,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const fetchSessions = async () => {
     if (!authHeader) return;
     try {
-      const res = await fetch(`${API_Base_Url}${End_point}`, {
+      const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
         headers: {
           Authorization: authHeader,
           "Content-Type": "application/json",
@@ -81,8 +81,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        console.log(data.detail);
+        alert("خطا در بارگذاری گفتگوها. لطفاً دوباره تلاش کنید");
         return;
       }
 
@@ -93,8 +92,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       }));
 
       setSession(dataArr.reverse());
-    } catch (err) {
-      console.error(err);
+    } catch {
+      alert("خطا در ارتباط با سرور. لطفاً اتصال خود را بررسی کنید");
     }
   };
 
@@ -112,20 +111,23 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     if (!authHeader) return;
     const fetchUserEmail = async () => {
       try {
-        const res = await fetch(`${API_Base_Url}/users`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}/users`, {
           headers: {
             Authorization: authHeader,
             "Content-Type": "application/json",
           },
           cache: "no-store",
         });
-        if (!res.ok) throw new Error("Error fetching user info");
+        if (!res.ok) {
+          alert("خطا در دریافت اطلاعات کاربر");
+          return;
+        }
         const data: UserData[] = await res.json();
         if (Array.isArray(data) && data.length > 0) {
           setUserEmail(data[0].email || "m@example.com");
         }
-      } catch (error) {
-        console.error("Error fetching user email:", error);
+      } catch {
+        alert("خطا در ارتباط با سرور. لطفاً دوباره تلاش کنید");
       }
     };
     fetchUserEmail();
@@ -135,21 +137,27 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const handleDeleteSessions = async (sessionId: string) => {
     if (!authHeader) return;
     try {
-      const res = await fetch(`${API_Base_Url}${End_point}/${sessionId}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: authHeader,
-          "Content-Type": "application/json",
-        },
-      });
+      const res = await fetch(
+        `${API_Base_Url}:${API_PORT}${End_point}/${sessionId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+          },
+        }
+      );
       if (!res.ok) {
-        const data = await res.json();
-        console.log(data.detail);
+        alert("خطا در حذف گفتگو. لطفاً دوباره تلاش کنید");
         return;
       }
       setSession((newSess) => newSess.filter((prev) => prev.id !== sessionId));
-    } catch (err) {
-      console.error(err);
+
+      if (pathname === `/dashboard/chatbot/${sessionId}`) {
+        router.push("/dashboard");
+      }
+    } catch {
+      alert("خطا در ارتباط با سرور. لطفاً دوباره تلاش کنید");
     }
   };
 

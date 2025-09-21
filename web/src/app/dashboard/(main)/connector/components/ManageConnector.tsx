@@ -4,12 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Check } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import Cookie from "js-cookie";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function ManageConnector() {
   const router = useRouter();
@@ -21,8 +22,8 @@ export default function ManageConnector() {
   const [name, setName] = useState("");
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // 📌 برای دسترسی به فایل انتخاب شده
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -31,21 +32,31 @@ export default function ManageConnector() {
       const tokenType = Cookie.get("token_type") ?? "Bearer";
 
       if (!token) {
-        alert("توکن پیدا نشد.");
+        alert("ابتدا وارد حساب کاربری خود شوید");
+        router.push("/login");
         return;
       }
 
       try {
-        const res = await fetch(`${API_Base_Url}/connectors/${connectorId}`, {
-          method: "GET",
-          headers: {
-            Authorization: `${tokenType} ${token}`,
-            "Content-Type": "application/json",
-          },
-        });
+        const res = await fetch(
+          `${API_Base_Url}:${API_PORT}/connectors/${connectorId}`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `${tokenType} ${token}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        if (res.status === 401) {
+          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
 
         if (!res.ok) {
-          console.error("Failed to fetch connector");
+          alert("خطا در بارگذاری اطلاعات کانکتور");
           return;
         }
 
@@ -62,14 +73,15 @@ export default function ManageConnector() {
         }
 
         setSelectedConnectors(types);
+      } catch {
+        alert("خطا در بارگذاری اطلاعات کانکتور");
+      } finally {
         setLoading(false);
-      } catch (err) {
-        console.error("Error fetching connector:", err);
       }
     };
 
     fetchConnector();
-  }, [connectorId]);
+  }, [connectorId, router]);
 
   const handleCheckboxChange = (value: string) => {
     if (selectedConnectors.includes(value)) {
@@ -83,66 +95,136 @@ export default function ManageConnector() {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
 
-    if (!token || !name || selectedConnectors.length === 0) {
+    if (!token) {
+      alert("ابتدا وارد حساب کاربری خود شوید");
+      router.push("/login");
+      return;
+    }
+
+    if (!name || selectedConnectors.length === 0) {
       alert("لطفا نام اتصال و حداقل یک نوع اتصال را انتخاب کنید");
       return;
     }
 
     try {
-      // مرحله اول: بروزرسانی اطلاعات کانکتور
-      const res = await fetch(`${API_Base_Url}/connectors/${connectorId}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `${tokenType} ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name,
-          connector_type:
-            selectedConnectors.length === 1
-              ? selectedConnectors[0]
-              : selectedConnectors,
-        }),
-      });
+      setSaving(true);
+
+      const res = await fetch(
+        `${API_Base_Url}:${API_PORT}/connectors/${connectorId}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `${tokenType} ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name,
+            connector_type:
+              selectedConnectors.length === 1
+                ? selectedConnectors[0]
+                : selectedConnectors,
+          }),
+        }
+      );
+
+      if (res.status === 401) {
+        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
+        return;
+      }
 
       if (!res.ok) {
-        const errorData = await res.json();
-        console.error("خطا در آپدیت کانکتور:", errorData);
         alert("خطا در ذخیره تغییرات");
         return;
       }
 
-      // مرحله دوم: اگر کانکتور PDF بود → فایل آپلود شود
-      if (connectorTypeFromUrl === "source_pdf" && fileInputRef.current?.files?.length) {
+      // آپلود فایل PDF یا Excel بر اساس نوع کانکتور
+      if (
+        (connectorTypeFromUrl === "source_pdf" ||
+          connectorTypeFromUrl === "google_sheet") &&
+        fileInputRef.current?.files?.length
+      ) {
         const file = fileInputRef.current.files[0];
         const formData = new FormData();
         formData.append("file", file);
 
         const uploadRes = await fetch(
-          `${API_Base_Url}/connectors/${connectorId}/upload`,
+          `${API_Base_Url}:${API_PORT}/connectors/${connectorId}/upload`,
           {
             method: "POST",
             headers: {
               Authorization: `${tokenType} ${token}`,
-              // ⚠️ نیازی به Content-Type نیست، خود مرورگر تنظیم می‌کند
             },
             body: formData,
           }
         );
 
+        if (uploadRes.status === 401) {
+          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
         if (!uploadRes.ok) {
-          const errorData = await uploadRes.json();
-          console.error("خطا در آپلود فایل:", errorData);
-          alert("خطا در آپلود فایل PDF");
+          alert(
+            connectorTypeFromUrl === "source_pdf"
+              ? "خطا در آپلود فایل PDF"
+              : "خطا در آپلود فایل اکسل"
+          );
           return;
         }
       }
 
       alert("تغییرات با موفقیت ذخیره شد");
       router.push("/dashboard/connector");
-    } catch (err) {
-      console.error(err);
+    } catch {
       alert("خطا در ذخیره تغییرات");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    const token = Cookie.get("auth_token");
+    const tokenType = Cookie.get("token_type") ?? "Bearer";
+
+    if (!token) {
+      alert("ابتدا وارد حساب کاربری خود شوید");
+      router.push("/login");
+      return;
+    }
+
+    try {
+      setDeleting(true);
+
+      const res = await fetch(
+        `${API_Base_Url}:${API_PORT}/connectors/${connectorId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `${tokenType} ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (res.status === 401) {
+        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
+        return;
+      }
+
+      if (!res.ok) {
+        alert("خطا در حذف اتصال داده");
+        return;
+      }
+
+      alert("اتصال با موفقیت حذف شد");
+      router.push("/dashboard/connector");
+    } catch {
+      alert("خطا در حذف اتصال داده");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -172,14 +254,13 @@ export default function ManageConnector() {
 
         {connectorTypeFromUrl === "google_sheet" && (
           <div className="w-full flex flex-col gap-2">
-            <Label className="mb-2">نوع اتصال (گوگل شیت)</Label>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={selectedConnectors.includes("google_sheet")}
-                onCheckedChange={() => handleCheckboxChange("google_sheet")}
-              />
-              <span>گوگل شیت</span>
-            </div>
+            <Label className="mb-2">آپلود فایل اکسل</Label>
+            <Input
+              ref={fileInputRef}
+              id="excel-upload"
+              type="file"
+              accept=".xlsx, .xls"
+            />
           </div>
         )}
 
@@ -213,8 +294,18 @@ export default function ManageConnector() {
         <Button
           className="cursor-pointer flex-1 md:flex-0"
           onClick={handleSave}
+          disabled={saving}
         >
-          ذخیره <Check />
+          {saving ? "در حال اتصال..." : "وصل"} <Check />
+        </Button>
+
+        <Button
+          variant="destructive"
+          className="cursor-pointer flex-1 md:flex-0"
+          onClick={handleDelete}
+          disabled={deleting}
+        >
+          {deleting ? "در حال حذف..." : "حذف اتصال داده"} <Trash2 />
         </Button>
       </div>
     </div>

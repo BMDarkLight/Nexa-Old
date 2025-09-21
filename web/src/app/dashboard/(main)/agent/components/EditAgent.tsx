@@ -1,58 +1,59 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import ReturnBtn from "./ReturnBtn";
+import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useRouter } from "next/navigation";
 import Cookie from "js-cookie";
 
-const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
-const End_point = "/agents";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
-interface EditAgentProps {
-  agentId: string;
-}
-
-interface AgentData {
-  name: string;
-  description?: string;
-  model?: string;
-  temperature?: number;
-  tools?: string[];
-}
-
-export default function EditAgent({ agentId }: EditAgentProps) {
-  const [name, setName] = useState<string>("");
+export default function EditAgent() {
+  const { agentId } = useParams();
   const router = useRouter();
 
-  // گرفتن اطلاعات ایجنت برای پر کردن input
+  const [name, setName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
-    if (!agentId) return;
-
     const fetchAgent = async () => {
-      try {
-        const token = Cookie.get("auth_token");
-        const tokenType = Cookie.get("token_type") ?? "Bearer";
-        if (!token) return;
+      const token = Cookie.get("auth_token");
+      const tokenType = Cookie.get("token_type") ?? "Bearer";
 
-        const res = await fetch(`${API_Base_Url}${End_point}/${agentId}`, {
+      if (!token) {
+        alert("ابتدا وارد حساب کاربری خود شوید");
+        router.push("/login");
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}/agents/${agentId}`, {
+          method: "GET",
           headers: {
             Authorization: `${tokenType} ${token}`,
             "Content-Type": "application/json",
           },
         });
 
-        if (res.ok) {
-          const data: AgentData = await res.json();
-          setName(data.name || "");
-        } else {
-          console.error("خطا در گرفتن اطلاعات ایجنت");
+        if (res.status === 401) {
+          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
         }
-      } catch (err) {
-        console.error("خطا در گرفتن ایجنت:", err);
+
+        if (!res.ok) {
+          alert("ایجنت مورد نیاز یافت نشد");
+          return;
+        }
+
+        const data = await res.json();
+        setName(data.name || "");
+      } catch {
+        alert("ایجنت مورد نیاز یافت نشد");
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -60,76 +61,69 @@ export default function EditAgent({ agentId }: EditAgentProps) {
   }, [agentId]);
 
   const handleSave = async () => {
+    const token = Cookie.get("auth_token");
+    const tokenType = Cookie.get("token_type") ?? "Bearer";
+
+    if (!token || !name) {
+      alert("لطفا نام ایجنت را وارد کنید");
+      return;
+    }
+
     try {
-      const token = Cookie.get("auth_token");
-      const tokenType = Cookie.get("token_type") ?? "Bearer";
+      setSaving(true);
 
-      if (!token) {
-        console.error("توکن در کوکی پیدا نشد");
-        return;
-      }
-
-      if (!agentId) {
-        console.error("agentId پیدا نشد");
-        return;
-      }
-
-      if (!name.trim()) {
-        alert("نام ایجنت نمی‌تواند خالی باشد.");
-        return;
-      }
-
-      const payload = { name };
-
-      const res = await fetch(`${API_Base_Url}${End_point}/${agentId}`, {
+      const res = await fetch(`${API_Base_Url}:${API_PORT}/agents/${agentId}`, {
         method: "PUT",
         headers: {
           Authorization: `${tokenType} ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ name }),
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        console.error("خطا در بروزرسانی ایجنت:", data.detail);
+      if (res.status === 401) {
+        alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
         return;
       }
 
-      // موفقیت → ریدایرکت
+      if (!res.ok) {
+        alert("خطا در ذخیره تغییرات");
+        return;
+      }
+
       router.push("/dashboard/agent");
-    } catch (error) {
-      console.error("خطا در ذخیره ایجنت:", error);
+    } catch {
+      alert("ثبت تغییرات با مشکل روبرو شد");
+    } finally {
+      setSaving(false);
     }
   };
 
+  if (loading) {
+    return <p>در حال بارگذاری اطلاعات ایجنت...</p>;
+  }
+
   return (
-    <div className="flex flex-col justify-between gap-5 lg:px-5 h-[100vh] md:h-auto">
-      <div className="flex flex-col gap-5">
-        <h2 className="text-xl font-medium mt-5">
-          تغییرات ایجنت را وارد کنید
-        </h2>
-        <div className="w-full">
-          <Label htmlFor="name-agent" className="mb-3">
-            نام ایجنت
-          </Label>
-          <Input
-            id="name-agent"
-            type="text"
-            placeholder="نام ایجنت"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
+    <div className="flex flex-col gap-5 lg:px-5 h-[100vh] md:h-auto">
+      <h2 className="text-xl font-medium mt-5 md:mt-5">مدیریت ایجنت</h2>
+
+      <div className="w-full">
+        <Label htmlFor="name-agent" className="mb-3">
+          نام ایجنت
+        </Label>
+        <Input
+          id="name-agent"
+          type="text"
+          placeholder="نام ایجنت"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
       </div>
 
       <div className="flex justify-end items-center gap-3">
-        <ReturnBtn />
-        <Button
-          className="cursor-pointer flex-1 md:flex-0"
-          onClick={handleSave}
-        >
-          ذخیره <Check />
+        <Button onClick={handleSave} disabled={saving}>
+          {saving ? "در حال ذخیره..." : "ذخیره"}
         </Button>
       </div>
     </div>

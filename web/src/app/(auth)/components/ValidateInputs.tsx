@@ -18,8 +18,9 @@ interface IUserData {
 }
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point = "/signin";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000" ;
 
 const schema = Yup.object({
   username: Yup.string().required("لطفا نام کاربری خود را وارد کنید"),
@@ -58,7 +59,7 @@ export default function ValidateInputs() {
 
   const onSubmit = async (data: IUserData) => {
     try {
-      const loginRes = await fetch(`${API_Base_Url}${End_point}`, {
+      const loginRes = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -81,7 +82,6 @@ export default function ValidateInputs() {
 
       const { access_token, token_type } = result;
 
-      // ✅ ست کردن کوکی‌ها بدون js-cookie و با قابلیت کار روی VPS
       setCookie("auth_token", access_token, 7);
       setCookie("token_type", token_type, 7);
 

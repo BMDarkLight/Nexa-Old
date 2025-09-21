@@ -30,8 +30,6 @@ export default function StartChat() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [isSending, setIsSending] = useState(false);
-
-  // ✅ authHeader از کوکی‌ها
   const [authHeader, setAuthHeader] = useState<string>("");
 
   const router = useRouter();
@@ -40,49 +38,62 @@ export default function StartChat() {
     process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
   const End_point_ask = "/ask";
   const End_point_agents = "/agents";
+  const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
-  // ✅ خوندن کوکی بعد از mount
   useEffect(() => {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
-    if (token) {
-      setAuthHeader(`${tokenType} ${token}`);
+    if (!token) {
+      alert("لطفاً ابتدا وارد حساب کاربری خود شوید");
+      router.push("/login");
+      return;
     }
-  }, []);
+    setAuthHeader(`${tokenType} ${token}`);
+  }, [router]);
 
-  // get agents list
   useEffect(() => {
     if (!authHeader) return;
     const fetchAgents = async () => {
       try {
-        const res = await fetch(`${API_Base_Url}${End_point_agents}`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point_agents}`, {
           headers: {
             Authorization: authHeader,
             "Content-Type": "application/json",
           },
         });
-        if (!res.ok) throw new Error("Error fetching agents");
+
+        if (res.status === 401) {
+          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
+        if (!res.ok) {
+          alert("خطا در دریافت لیست ایجنت‌ها. لطفاً دوباره تلاش کنید");
+          return;
+        }
         const data: Agent[] = await res.json();
         setAgents(data);
-      } catch (err) {
-        console.error("Failed to fetch agents:", err);
+      } catch {
+        alert("خطا در دریافت لیست ایجنت‌ها. لطفاً دوباره تلاش کنید");
       }
     };
     fetchAgents();
-  }, [authHeader]);
+  }, [authHeader, router]);
 
-  // handle sessions + session id
   const handleSend = async () => {
-    if (!query || !authHeader) return;
+    if (!query || !authHeader) {
+      alert("لطفاً یک پرسش وارد کنید");
+      return;
+    }
 
     setIsSending(true);
     try {
       const sessionId = Math.random().toString(36).substring(2, 18);
-
       const body: any = { query, session_id: sessionId };
       if (selectedAgent) body.agent_id = selectedAgent;
 
-      const res = await fetch(`${API_Base_Url}${End_point_ask}`, {
+      const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point_ask}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -91,9 +102,17 @@ export default function StartChat() {
         body: JSON.stringify(body),
       });
 
-      if (!res.ok) throw new Error("Error in /ask request");
+      if (res.status === 401) {
+        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
+        return;
+      }
 
-      // consume stream
+      if (!res.ok) {
+        alert("خطا در ارسال پرسش. لطفاً دوباره تلاش کنید");
+        return;
+      }
+
       try {
         const reader = res.body?.getReader();
         if (reader) {
@@ -101,20 +120,19 @@ export default function StartChat() {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            decoder.decode(value, { stream: true }); // فقط مصرف می‌کنیم
+            decoder.decode(value, { stream: true });
           }
         } else {
           await res.clone().text();
         }
-      } catch (err) {
-        console.warn("Reading /ask response stream failed:", err);
+      } catch {
+        alert("خطایی ناشناخته رخ داده است");
       }
 
       const responseSessionId = res.headers.get("X-Session-Id") || sessionId;
-
       router.push(`/dashboard/chatbot/${responseSessionId}`);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      alert("خطا در ارسال پرسش. لطفاً دوباره تلاش کنید");
     } finally {
       setIsSending(false);
     }

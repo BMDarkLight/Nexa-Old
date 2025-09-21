@@ -24,13 +24,13 @@ interface Connector {
   org: string;
 }
 
-const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function NewAgent() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const router = useRouter();
-  const { agent, toggleConnector } = useAgent();   
+  const { agent, toggleConnector } = useAgent();
 
   useEffect(() => {
     const fetchConnectors = async () => {
@@ -38,12 +38,13 @@ export default function NewAgent() {
       const tokenType = Cookie.get("token_type") ?? "Bearer";
 
       if (!token) {
-        console.error("توکن‌ها در کوکی یافت نشدند.");
+        alert("ابتدا وارد حساب کاربری خود شوید");
+        router.push("/login");
         return;
       }
 
       try {
-        const res = await fetch(`${API_Base_Url}/connectors`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}/connectors`, {
           method: "GET",
           headers: {
             Authorization: `${tokenType} ${token}`,
@@ -51,8 +52,14 @@ export default function NewAgent() {
           },
         });
 
+        if (res.status === 401) {
+          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
         if (!res.ok) {
-          console.error("Failed to fetch connectors");
+          alert("خطا در گرفتن کانکتورها. لطفا دوباره تلاش کنید");
           return;
         }
 
@@ -63,13 +70,13 @@ export default function NewAgent() {
         );
 
         setConnectors(connectedConnectors);
-      } catch (err) {
-        console.error("Error fetching connectors:", err);
+      } catch {
+        alert("خطا در لیست کانکتورها لطفا دوباره تلاش کنید");
       }
     };
 
     fetchConnectors();
-  }, []);
+  }, [router]);
 
   const getConnectorLogo = (type: string) => {
     switch (type) {
@@ -145,8 +152,8 @@ export default function NewAgent() {
                       {getConnectionStatus(connector.settings)}
                     </Badge>
                     <Switch
-                      checked={agent.connector_ids.includes(connector._id)}   
-                      onCheckedChange={() => toggleConnector(connector._id)}  
+                      checked={agent.connector_ids.includes(connector._id)}
+                      onCheckedChange={() => toggleConnector(connector._id)}
                       className="flex flex-row-reverse items-center"
                     />
                   </CardFooter>
@@ -159,7 +166,10 @@ export default function NewAgent() {
 
       <div className="flex justify-end items-center gap-3">
         <ReturnBtn />
-        <Button className="cursor-pointer flex-1 md:flex-0" onClick={goNextStep}>
+        <Button
+          className="cursor-pointer flex-1 md:flex-0"
+          onClick={goNextStep}
+        >
           مرحله بعد <ArrowLeft />
         </Button>
       </div>

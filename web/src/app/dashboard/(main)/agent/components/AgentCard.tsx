@@ -47,11 +47,12 @@ const connectorIcons: Record<string, { name: string; src: string }> = {
 };
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point = "/agents";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function AgentCard() {
-  const route = useRouter();
+  const router = useRouter();
   const [agents, setAgents] = useState<Agents[]>([]);
   const [loading, setLoading] = useState(true);
   const [agentConnectors, setAgentConnectors] = useState<
@@ -65,16 +66,24 @@ export default function AgentCard() {
         const tokenType = Cookie.get("token_type");
 
         if (!token || !tokenType) {
-          console.warn("No token found in cookies");
+          alert("ابتدا وارد حساب کاربری خود شوید");
+          router.push("/login");
           setLoading(false);
           return;
         }
 
-        const res = await fetch(`${API_Base_Url}${End_point}`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
           headers: {
             Authorization: `${tokenType} ${token}`,
           },
         });
+
+        if (res.status === 401) {
+          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          setLoading(false);
+          return;
+        }
 
         const data = await res.json();
         if (res.ok) {
@@ -83,13 +92,19 @@ export default function AgentCard() {
           data.forEach(async (agent: Agents) => {
             try {
               const resConn = await fetch(
-                `${API_Base_Url}${End_point}/${agent._id}/connectors`,
+                `${API_Base_Url}:${API_PORT}${End_point}/${agent._id}/connectors`,
                 {
                   headers: {
                     Authorization: `${tokenType} ${token}`,
                   },
                 }
               );
+
+              if (resConn.status === 401) {
+                alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
+                router.push("/login");
+                return;
+              }
 
               const connectorsData = await resConn.json();
               if (resConn.ok) {
@@ -98,15 +113,15 @@ export default function AgentCard() {
                   [agent._id]: connectorsData.connectors || [],
                 }));
               }
-            } catch (err) {
-              console.error("خطا در گرفتن کانکتورهای ایجنت:", err);
+            } catch {
+              alert("کانکتوری برای ایجنت ها یافت نشد");
             }
           });
         } else {
-          console.error("API Error:", data);
+          alert("مشکل از سمت سرور است");
         }
-      } catch (err) {
-        console.error("Fetch failed:", err);
+      } catch {
+        alert("خطا در گرفتن لیست لطفا دوباره تلاش کنید");
       } finally {
         setLoading(false);
       }
@@ -191,6 +206,7 @@ export default function AgentCard() {
                     <CardFooter className="w-full">
                       <Button
                         className="cursor-pointer bg-transparent border-1 text-black w-full hover:text-secondary mt-2"
+                        onClick={() => router.push(`/dashboard/agent/manage-agent/${agent._id}`)}
                       >
                         ویرایش
                       </Button>

@@ -37,12 +37,13 @@ export default function ForgetPasswordCom() {
   } = useForm<TFormValue>({
     resolver: yupResolver(schema),
   });
-  const API_Base_Url = process.env.API_BASE_URL ?? "http://62.60.198.4:8000";
+  const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
   const End_point = "/forgot-password";
+  const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000" ;
   const onSubmit = async (data: TFormValue) => {
     try {
       const loginRes = await fetch(
-        `${API_Base_Url}${End_point}`,
+        `${API_Base_Url}:${API_PORT}${End_point}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -53,15 +54,7 @@ export default function ForgetPasswordCom() {
       );
 
       if (!loginRes.ok) {
-        // Swal.fire({
-        //   icon: "error",
-        //   title: "خطا",
-        //   text: "خطا به وجود آمد",
-        // });
-        // return;
-        const data = await loginRes.json()
-        console.log(data.detail);
-        
+        alert("اتصال به سرور به درستی انجام نشد")
       }
 
       Swal.fire({
@@ -74,7 +67,7 @@ export default function ForgetPasswordCom() {
       Swal.fire({
         icon: "error",
         title: "خطا",
-        text: err instanceof Error ? err.message : "خطای ناشناخته",
+        text: "خطای ناشناخته",
       });
     }
   };

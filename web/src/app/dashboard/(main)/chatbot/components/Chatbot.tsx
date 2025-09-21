@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import Cookie from "js-cookie";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 interface Agent {
   _id: string;
@@ -35,12 +35,14 @@ interface ChatMessage {
 }
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point_ask = "/ask";
 const End_point_agents = "/agents";
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function Chatbot() {
   const params = useParams();
+  const router = useRouter();
   const sessionId = params?.session_id as string;
 
   const [query, setQuery] = useState<string>("");
@@ -54,7 +56,6 @@ export default function Chatbot() {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editValue, setEditValue] = useState<string>("");
 
-  // ✅ استیت برای کوکی‌ها
   const [authHeader, setAuthHeader] = useState<string>("");
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -63,76 +64,111 @@ export default function Chatbot() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // ✅ کوکی‌ها رو بعد از mount بخون
+  // check token
   useEffect(() => {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
-    if (token) {
-      setAuthHeader(`${tokenType} ${token}`);
+    if (!token) {
+      alert("ابتدا وارد حساب کاربری خود شوید");
+      router.push("/login");
+      return;
     }
-  }, []);
+    setAuthHeader(`${tokenType} ${token}`);
+  }, [router]);
 
   // get username
   useEffect(() => {
     if (!authHeader) return;
     const fetchUser = async () => {
       try {
-        const res = await fetch(`${API_Base_Url}/users`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}/users`, {
           headers: {
             Authorization: authHeader,
             "Content-Type": "application/json",
           },
         });
-        if (!res.ok) throw new Error("Error fetching user info");
+
+        if (res.status === 401) {
+          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
+        if (!res.ok) {
+          alert("خطا در دریافت اطلاعات کاربر");
+          return;
+        }
+
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
           setUsername(data[0].username || "کاربر");
         }
-      } catch (error) {
-        console.error("Error fetching user:", error);
+      } catch {
+        alert("خطا در دریافت اطلاعات کاربر");
       }
     };
     fetchUser();
-  }, [authHeader]);
+  }, [authHeader, router]);
 
   // get agents
   useEffect(() => {
     if (!authHeader) return;
     const fetchAgents = async () => {
       try {
-        const res = await fetch(`${API_Base_Url}${End_point_agents}`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point_agents}`, {
           headers: {
             Authorization: authHeader,
             "Content-Type": "application/json",
           },
         });
+
+        if (res.status === 401) {
+          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
+        if (!res.ok) {
+          alert("خطا در دریافت لیست ایجنت‌ها");
+          return;
+        }
+
         const data: Agent[] = await res.json();
         setAgents(data);
-      } catch (error) {
-        console.error("Error fetching agents:", error);
+      } catch {
+        alert("خطا در دریافت لیست ایجنت‌ها");
       }
     };
     fetchAgents();
-  }, [authHeader]);
+  }, [authHeader, router]);
 
   // get history chat
   useEffect(() => {
     if (!authHeader || !sessionId) return;
     const fetchSessionHistory = async (retry = 3, delay = 1000) => {
       try {
-        const res = await fetch(`${API_Base_Url}/sessions/${sessionId}`, {
+        const res = await fetch(`${API_Base_Url}:${API_PORT}/sessions/${sessionId}`, {
           headers: {
             Authorization: authHeader,
             "Content-Type": "application/json",
           },
         });
 
+        if (res.status === 401) {
+          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
         if (res.status === 404 && retry > 0) {
           setTimeout(() => fetchSessionHistory(retry - 1, delay), delay);
           return;
         }
 
-        if (!res.ok) throw new Error("Error fetching session history");
+        if (!res.ok) {
+          alert("خطا در دریافت تاریخچه گفتگو");
+          return;
+        }
 
         const data = await res.json();
         setChatHistory(
@@ -152,13 +188,13 @@ export default function Chatbot() {
         }
 
         scrollToBottom();
-      } catch (err) {
-        console.error("Error loading session history:", err);
+      } catch {
+        alert("خطا در دریافت تاریخچه گفتگو");
       }
     };
 
     fetchSessionHistory();
-  }, [authHeader, sessionId]);
+  }, [authHeader, sessionId, router]);
 
   // handle send
   const handleSend = async () => {
@@ -184,7 +220,7 @@ export default function Chatbot() {
       const body: any = { query: userMessage, session_id: sessionId };
       if (selectedAgent) body.agent_id = selectedAgent;
 
-      const response = await fetch(`${API_Base_Url}${End_point_ask}`, {
+      const response = await fetch(`${API_Base_Url}:${API_PORT}${End_point_ask}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -193,7 +229,16 @@ export default function Chatbot() {
         body: JSON.stringify(body),
       });
 
-      if (!response.ok) throw new Error("Error in /ask request");
+      if (response.status === 401) {
+        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
+        return;
+      }
+
+      if (!response.ok) {
+        alert("خطا در ارسال پرسش");
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -212,8 +257,8 @@ export default function Chatbot() {
           scrollToBottom();
         }
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      alert("خطا در ارسال پرسش");
     } finally {
       setIsSending(false);
       setIsBotTyping(false);
@@ -233,7 +278,7 @@ export default function Chatbot() {
       if (selectedAgent) params.append("agent_id", selectedAgent);
 
       const response = await fetch(
-        `${API_Base_Url}/ask/edit/${msg.message_num}`,
+        `${API_Base_Url}:${API_PORT}/ask/edit/${msg.message_num}`,
         {
           method: "POST",
           headers: {
@@ -244,7 +289,16 @@ export default function Chatbot() {
         }
       );
 
-      if (!response.ok) throw new Error("Error in edit request");
+      if (response.status === 401) {
+        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        router.push("/login");
+        return;
+      }
+
+      if (!response.ok) {
+        alert("خطا در ویرایش پیام");
+        return;
+      }
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -270,8 +324,8 @@ export default function Chatbot() {
 
       setEditingIndex(null);
       setEditValue("");
-    } catch (error) {
-      console.error("Edit failed:", error);
+    } catch {
+      alert("خطا در ویرایش پیام");
     }
   };
 
@@ -299,8 +353,8 @@ export default function Chatbot() {
         await navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
-      } catch (err) {
-        console.error("Copy failed", err);
+      } catch {
+        alert("کپی کردن متن با خطا مواجه شد");
       }
     };
     return (
