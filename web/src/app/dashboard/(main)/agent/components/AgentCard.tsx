@@ -52,7 +52,6 @@ const API_Base_Url =
 const End_point = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
-// ✅ برای چک کردن اعتبار توکن از اندپوینت users استفاده می‌کنیم
 const VALIDATE_ENDPOINT = "/users";
 
 export default function AgentCard() {
@@ -131,12 +130,9 @@ export default function AgentCard() {
                   [agent._id]: connectorsData.connectors || [],
                 }));
               }
-            } catch {
-              // اینجا می‌تونی لاگ خطا بذاری
-            }
+            } catch {}
           });
         } else {
-          
         }
       } catch {
         alert("خطا در برقراری ارتباط با سرور");
@@ -202,31 +198,37 @@ export default function AgentCard() {
                       <div className="flex justify-between text-xs md:text-sm">
                         <p>اتصالات</p>
                         <div>
-                          <TooltipProvider>
-                            <div className="flex flex-row-reverse -space-x-1">
-                              {connectors.map((connector, index) => {
-                                const connData =
-                                  connectorIcons[connector.connector_type];
-                                if (!connData) return null;
-                                return (
-                                  <Tooltip key={index}>
-                                    <TooltipTrigger asChild>
-                                      <div className="w-5 h-5 rounded-full overflow-hidden cursor-pointer transition-transform hover:scale-110 border-1">
-                                        <img
-                                          src={connData.src}
-                                          alt={connData.name}
-                                          className="object-cover w-full h-full"
-                                        />
-                                      </div>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p>{connData.name}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                );
-                              })}
-                            </div>
-                          </TooltipProvider>
+                          {connectors.length > 0 ? (
+                            <TooltipProvider>
+                              <div className="flex flex-row-reverse -space-x-1">
+                                {connectors.map((connector, index) => {
+                                  const connData =
+                                    connectorIcons[connector.connector_type];
+                                  if (!connData) return null;
+                                  return (
+                                    <Tooltip key={index}>
+                                      <TooltipTrigger asChild>
+                                        <div className="w-5 h-5 rounded-full overflow-hidden cursor-pointer transition-transform hover:scale-110 border-1">
+                                          <img
+                                            src={connData.src}
+                                            alt={connData.name}
+                                            className="object-cover w-full h-full"
+                                          />
+                                        </div>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>{connData.name}</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  );
+                                })}
+                              </div>
+                            </TooltipProvider>
+                          ) : (
+                            <Badge className="bg-gray-200 text-gray-600">
+                              اتصالی ندارد
+                            </Badge>
+                          )}
                         </div>
                       </div>
                     </CardContent>

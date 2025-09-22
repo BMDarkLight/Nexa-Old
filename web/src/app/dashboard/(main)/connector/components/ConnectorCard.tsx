@@ -83,6 +83,8 @@ export default function ConnectorCard() {
         return "/Squad/image/goole-drive.png";
       case "source_pdf":
         return "/Squad/image/card-img.png";
+      case "source_uri":
+        return "/Squad/image/card-img.png";
       default:
         return "/Squad/image/card-img.png";
     }

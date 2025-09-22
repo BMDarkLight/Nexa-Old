@@ -105,10 +105,6 @@ export default function NewAgent() {
   };
 
   const goNextStep = () => {
-    if (agent.connector_ids.length === 0) {
-      alert("لطفا حداقل یک کانکتور انتخاب کنید.");
-      return;
-    }
     router.push("/dashboard/agent/new-agent/name-agent");
   };
 

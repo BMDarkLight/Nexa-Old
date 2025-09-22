@@ -55,6 +55,7 @@ export default function Chatbot() {
 
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editValue, setEditValue] = useState<string>("");
+  const [isEditingSending, setIsEditingSending] = useState<boolean>(false);
 
   const [authHeader, setAuthHeader] = useState<string>("");
 
@@ -95,7 +96,6 @@ export default function Chatbot() {
         }
 
         if (!res.ok) {
-          
           return;
         }
 
@@ -104,7 +104,7 @@ export default function Chatbot() {
           setUsername(data[0].username || "کاربر");
         }
       } catch {
-        
+        //
       }
     };
     fetchUser();
@@ -115,12 +115,15 @@ export default function Chatbot() {
     if (!authHeader) return;
     const fetchAgents = async () => {
       try {
-        const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point_agents}`, {
-          headers: {
-            Authorization: authHeader,
-            "Content-Type": "application/json",
-          },
-        });
+        const res = await fetch(
+          `${API_Base_Url}:${API_PORT}${End_point_agents}`,
+          {
+            headers: {
+              Authorization: authHeader,
+              "Content-Type": "application/json",
+            },
+          }
+        );
 
         if (res.status === 401) {
           alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
@@ -147,15 +150,18 @@ export default function Chatbot() {
     if (!authHeader || !sessionId) return;
     const fetchSessionHistory = async (retry = 3, delay = 1000) => {
       try {
-        const res = await fetch(`${API_Base_Url}:${API_PORT}/sessions/${sessionId}`, {
-          headers: {
-            Authorization: authHeader,
-            "Content-Type": "application/json",
-          },
-        });
+        const res = await fetch(
+          `${API_Base_Url}:${API_PORT}/sessions/${sessionId}`,
+          {
+            headers: {
+              Authorization: authHeader,
+              "Content-Type": "application/json",
+            },
+          }
+        );
 
         if (res.status === 401) {
-          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
           router.push("/login");
           return;
         }
@@ -166,7 +172,6 @@ export default function Chatbot() {
         }
 
         if (!res.ok) {
-          
           return;
         }
 
@@ -189,7 +194,7 @@ export default function Chatbot() {
 
         scrollToBottom();
       } catch {
-       
+        //
       }
     };
 
@@ -220,14 +225,17 @@ export default function Chatbot() {
       const body: any = { query: userMessage, session_id: sessionId };
       if (selectedAgent) body.agent_id = selectedAgent;
 
-      const response = await fetch(`${API_Base_Url}:${API_PORT}${End_point_ask}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: authHeader,
-        },
-        body: JSON.stringify(body),
-      });
+      const response = await fetch(
+        `${API_Base_Url}:${API_PORT}${End_point_ask}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: authHeader,
+          },
+          body: JSON.stringify(body),
+        }
+      );
 
       if (response.status === 401) {
         alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
@@ -271,6 +279,8 @@ export default function Chatbot() {
     const msg = chatHistory[index];
     if (!msg?.message_num) return;
 
+    setIsEditingSending(true);
+
     try {
       const params = new URLSearchParams();
       params.append("query", editValue);
@@ -290,7 +300,7 @@ export default function Chatbot() {
       );
 
       if (response.status === 401) {
-        alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+        alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
         router.push("/login");
         return;
       }
@@ -326,6 +336,8 @@ export default function Chatbot() {
       setEditValue("");
     } catch {
       alert("خطا در ویرایش پیام");
+    } finally {
+      setIsEditingSending(false);
     }
   };
 
@@ -359,7 +371,11 @@ export default function Chatbot() {
     };
     return (
       <span onClick={handleCopy} className="cursor-pointer">
-        {copied ? <Check size={16} className="mt-2" /> : <Copy size={16} className="mt-2" />}
+        {copied ? (
+          <Check size={16} className="mt-2" />
+        ) : (
+          <Copy size={16} className="mt-2" />
+        )}
       </span>
     );
   };
@@ -384,14 +400,21 @@ export default function Chatbot() {
                       />
                       <button
                         onClick={() => {
-                          if (editingIndex !== null) handleSaveEdit(editingIndex);
+                          if (editingIndex !== null)
+                            handleSaveEdit(editingIndex);
                         }}
-                        className="px-2 bg-blue-500 text-white rounded"
+                        disabled={isEditingSending}
+                        className={`px-2 text-white rounded ${
+                          isEditingSending
+                            ? "bg-blue-300 cursor-not-allowed"
+                            : "bg-blue-500"
+                        }`}
                       >
                         ذخیره
                       </button>
                       <button
                         onClick={() => setEditingIndex(null)}
+                        disabled={isEditingSending}
                         className="px-2 bg-gray-400 text-white rounded"
                       >
                         لغو
@@ -446,7 +469,10 @@ export default function Chatbot() {
 
       <div className="flex items-end gap-2 relative">
         <div className="absolute right-3 top-2">
-          <Select value={selectedAgent} onValueChange={(val) => setSelectedAgent(val)}>
+          <Select
+            value={selectedAgent}
+            onValueChange={(val) => setSelectedAgent(val)}
+          >
             <SelectTrigger className="w-[150px] text-xs rounded-xl">
               <SelectValue placeholder="انتخاب ایجنت" />
             </SelectTrigger>

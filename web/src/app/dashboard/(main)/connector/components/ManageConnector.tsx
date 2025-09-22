@@ -24,6 +24,7 @@ export default function ManageConnector() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [uri, setUri] = useState(""); // برای نگهداری URL
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -67,12 +68,18 @@ export default function ManageConnector() {
         if (data.connector_type === "google_sheet") types.push("google_sheet");
         if (data.connector_type === "google_drive") types.push("google_drive");
         if (data.connector_type === "source_pdf") types.push("source_pdf");
+        if (data.connector_type === "source_uri") types.push("source_uri");
 
         if (Array.isArray(data.connector_type)) {
           data.connector_type.forEach((type: string) => types.push(type));
         }
 
         setSelectedConnectors(types);
+
+        // اگر قبلاً setting داشته باشه مقدار uri رو بیاریم
+        if (data.settings && data.settings.uri) {
+          setUri(data.settings.uri);
+        }
       } catch {
         alert("خطا در بارگذاری اطلاعات کانکتور");
       } finally {
@@ -138,7 +145,7 @@ export default function ManageConnector() {
         return;
       }
 
-      // آپلود فایل PDF یا Excel بر اساس نوع کانکتور
+      // هندل آپلود برای PDF و Excel
       if (
         (connectorTypeFromUrl === "source_pdf" ||
           connectorTypeFromUrl === "google_sheet") &&
@@ -171,6 +178,39 @@ export default function ManageConnector() {
               ? "خطا در آپلود فایل PDF"
               : "خطا در آپلود فایل اکسل"
           );
+          return;
+        }
+      }
+
+      // هندل برای source_uri (ذخیره url داخل settings)
+      if (connectorTypeFromUrl === "source_uri") {
+        if (!uri) {
+          alert("لطفاً یک آدرس URL معتبر وارد کنید");
+          return;
+        }
+
+        const uriRes = await fetch(
+          `${API_Base_Url}:${API_PORT}/connectors/${connectorId}/settings`,
+          {
+            method: "PUT",
+            headers: {
+              Authorization: `${tokenType} ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              settings: { uri },
+            }),
+          }
+        );
+
+        if (uriRes.status === 401) {
+          alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
+          router.push("/login");
+          return;
+        }
+
+        if (!uriRes.ok) {
+          alert("خطا در ذخیره URL اتصال");
           return;
         }
       }
@@ -285,6 +325,22 @@ export default function ManageConnector() {
               id="pdf-upload"
               type="file"
               accept="application/pdf"
+            />
+          </div>
+        )}
+
+        {connectorTypeFromUrl === "source_uri" && (
+          <div className="w-full flex flex-col gap-2">
+            <Label htmlFor="uri-input" className="mb-2">
+              آدرس URL
+            </Label>
+            <Input
+              id="uri-input"
+              type="url"
+              placeholder="https://example.com"
+              value={uri}
+              onChange={(e) => setUri(e.target.value)}
+              required
             />
           </div>
         )}

@@ -138,6 +138,17 @@ export default function NewConnector() {
               <span>فایل PDF</span>
             </label>
           </div>
+
+           <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="connector_type"
+                value="source_uri"
+                checked={selectedConnector === "source_uri"}
+                onChange={(e) => setSelectedConnector(e.target.value)}
+              />
+              <span>آدرس URL</span>
+            </label>
         </div>
       </div>
 
