@@ -1,9 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from bson import ObjectId
-import datetime
-from datetime import timezone
-from functools import partial
+from datetime import datetime, timezone
 
 from api.main import app, pwd_context
 from api.auth import users_db, orgs_db
@@ -23,7 +21,6 @@ def setup_and_teardown_db():
     agents_db.delete_many({})
     connectors_db.delete_many({})
 
-# --- FIX: Changed scope to "function" to match the database fixture ---
 @pytest.fixture(scope="function")
 def org_admin_token():
     org = orgs_db.insert_one({"name": "ConnectorLogicTestCorp"})
@@ -107,8 +104,8 @@ def test_delete_connector_and_verify_pull_from_agent(org_admin_token):
 @pytest.mark.asyncio
 async def test_agent_logic_with_refactored_connector(org_admin_token):
     """
-    Tests that get_agent_components correctly configures and attaches a tool 
-    from a connector using the new factory pattern.
+    Tests that get_agent_components correctly configures and attaches a tool
+    from a connector using the new, robust class-based factory pattern.
     """
     _, org_id = org_admin_token
     
@@ -153,12 +150,13 @@ async def test_agent_logic_with_refactored_connector(org_admin_token):
     
     assert configured_tool.name == "google_sheet_logic_test_sheet"
     
-    assert isinstance(configured_tool.func, partial), "Tool's function should be a partial"
+    assert callable(configured_tool.func), "Tool's function should be a callable method"
     
-    assert len(configured_tool.func.args) > 0, "Partial function should have pre-filled arguments"
-    prefilled_settings = configured_tool.func.args[0]
+    tool_instance = configured_tool.func.__self__
+    assert hasattr(tool_instance, 'settings'), "Tool instance should have a 'settings' attribute"
     
-    assert prefilled_settings == connector_settings, "The settings in the partial function do not match the database"
+    prefilled_settings = tool_instance.settings
+    assert prefilled_settings == connector_settings, "The settings in the tool instance do not match the database"
 
     connectors_db.delete_one({"_id": connector_id})
     agents_db.delete_one({"_id": agent_result.inserted_id})

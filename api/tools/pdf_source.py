@@ -1,5 +1,4 @@
 import os
-from functools import partial
 from typing import Dict, Any, List
 import numpy as np
 from bson import ObjectId
@@ -19,73 +18,76 @@ embedding_model = OpenAIEmbeddings()
 class PDFSourceInput(BaseModel):
     query: str = Field(description="The question or topic to search for within the PDF document.")
 
-def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    """
-    Calculates the cosine similarity between two vectors.
-    """
-    vec1 = np.array(vec1)
-    vec2 = np.array(vec2)
-    dot_product = np.dot(vec1, vec2)
-    norm1 = np.linalg.norm(vec1)
-    norm2 = np.linalg.norm(vec2)
-    if norm1 == 0 or norm2 == 0:
-        return 0.0
-    return dot_product / (norm1 * norm2)
+class PDFSearcher:
+    def __init__(self, settings: Dict[str, Any]):
+        """Initializes the searcher with the specific settings for this tool instance."""
+        self.settings = settings
 
-def _read_pdf_logic(settings: Dict[str, Any], query: str) -> str:
-    """
-    Internal logic to find and return the most relevant text chunks from a stored PDF embedding.
-    """
-    TOP_K = 3
-    SIMILARITY_THRESHOLD = 0.75
+    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """Calculates the cosine similarity between two vectors."""
+        vec1 = np.array(vec1)
+        vec2 = np.array(vec2)
+        dot_product = np.dot(vec1, vec2)
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return dot_product / (norm1 * norm2)
 
-    if not knowledge_db:
-        return "Error: Database connection for the knowledge base is not available."
+    def search(self, query: str) -> str:
+        """
+        The main tool logic, now a method of the class. It finds the most relevant 
+        text chunks from a stored PDF embedding.
+        """
+        TOP_K = 3
+        SIMILARITY_THRESHOLD = 0.75
 
-    document_id = settings.get("document_id")
-    if not document_id:
-        return "Error: Connector is misconfigured. 'document_id' is missing from its settings."
+        if not knowledge_db:
+            return "Error: Database connection for the knowledge base is not available."
 
-    try:
-        source_document = knowledge_db.find_one({"_id": ObjectId(document_id)})
-    except Exception as e:
-        return f"Error: The provided 'document_id' is invalid or a database error occurred: {e}"
+        document_id = self.settings.get("document_id")
+        if not document_id:
+            return "Error: Connector is misconfigured. 'document_id' is missing from its settings."
 
-    if not source_document or "chunks" not in source_document:
-        return f"Error: No document or text chunks were found for the document ID: {document_id}."
+        try:
+            source_document = knowledge_db.find_one({"_id": ObjectId(document_id)})
+        except Exception as e:
+            return f"Error: The provided 'document_id' is invalid or a database error occurred: {e}"
 
-    query_embedding = embedding_model.embed_query(query)
+        if not source_document or "chunks" not in source_document:
+            return f"Error: No document or text chunks were found for the document ID: {document_id}."
 
-    all_chunks = []
-    for chunk in source_document.get("chunks", []):
-        if "text" in chunk and "embedding" in chunk:
-            similarity = _cosine_similarity(query_embedding, chunk["embedding"])
-            all_chunks.append({"text": chunk["text"], "score": similarity})
+        query_embedding = embedding_model.embed_query(query)
 
-    sorted_chunks = sorted(all_chunks, key=lambda x: x["score"], reverse=True)
+        all_chunks = []
+        for chunk in source_document.get("chunks", []):
+            if "text" in chunk and "embedding" in chunk:
+                similarity = self._cosine_similarity(query_embedding, chunk["embedding"])
+                all_chunks.append({"text": chunk["text"], "score": similarity})
 
-    top_chunks = [chunk for chunk in sorted_chunks if chunk["score"] >= SIMILARITY_THRESHOLD][:TOP_K]
+        sorted_chunks = sorted(all_chunks, key=lambda x: x["score"], reverse=True)
+        top_chunks = [chunk for chunk in sorted_chunks if chunk["score"] >= SIMILARITY_THRESHOLD][:TOP_K]
 
-    if not top_chunks:
-        return "Could not find any relevant information in the document for that query."
+        if not top_chunks:
+            return "Could not find any relevant information in the document for that query."
 
-    combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
-    
-    return f"Found relevant information in the document:\n\n{combined_context}"
+        combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
+        
+        return f"Found relevant information in the document:\n\n{combined_context}"
 
 def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> Tool:
     """
-    Creates a configured tool for querying PDF embeddings.
-    The 'settings' (containing the document_id) are pre-filled and not exposed to the LLM.
+    Creates a configured tool for querying PDF embeddings using a class-based approach.
     """
-    configured_func = partial(_read_pdf_logic, settings)
+    searcher = PDFSearcher(settings=settings)
     
     return Tool(
         name=name,
-        func=configured_func,
+        func=searcher.search,
         description=(
             "Use this tool to search for information within a specific, pre-loaded PDF document. "
             "Provide a clear question or query about the content you are looking for."
         ),
         args_schema=PDFSourceInput
     )
+

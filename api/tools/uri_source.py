@@ -1,5 +1,4 @@
 import os
-from functools import partial
 from typing import Dict, Any, List
 import numpy as np
 import httpx
@@ -14,76 +13,82 @@ embedding_model = OpenAIEmbeddings()
 class URISourceInput(BaseModel):
     query: str = Field(description="The question or topic to search for within the web page content.")
 
-def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    """Calculates the cosine similarity between two vectors."""
-    vec1 = np.array(vec1)
-    vec2 = np.array(vec2)
-    dot_product = np.dot(vec1, vec2)
-    norm1 = np.linalg.norm(vec1)
-    norm2 = np.linalg.norm(vec2)
-    if norm1 == 0 or norm2 == 0:
-        return 0.0
-    return dot_product / (norm1 * norm2)
+class URISearcher:
+    def __init__(self, settings: Dict[str, Any]):
+        """Initializes the searcher with the specific settings for this tool instance."""
+        self.settings = settings
 
-def _read_uri_logic(settings: Dict[str, Any], query: str) -> str:
-    """
-    Internal logic to fetch, process, and find the most relevant text chunk 
-    from a live URI.
-    """
-    url = settings.get("url")
-    if not url:
-        return "Error: Connector is misconfigured. A 'url' is missing from its settings."
+    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """Calculates the cosine similarity between two vectors."""
+        vec1 = np.array(vec1)
+        vec2 = np.array(vec2)
+        dot_product = np.dot(vec1, vec2)
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return dot_product / (norm1 * norm2)
 
-    try:
-        response = httpx.get(url, follow_redirects=True, timeout=15.0)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        page_text = soup.get_text(separator=' ', strip=True)
+    def search(self, query: str) -> str:
+        """
+        The main tool logic, now a method of the class. It fetches, processes, 
+        and finds the most relevant text chunk from the live URI.
+        """
+        url = self.settings.get("url")
+        if not url:
+            return "Error: Connector is misconfigured. A 'url' is missing from its settings."
 
-        if not page_text.strip():
-            return f"Error: No text content could be extracted from the URL: {url}"
+        try:
+            response = httpx.get(url, follow_redirects=True, timeout=15.0)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            page_text = soup.get_text(separator=' ', strip=True)
 
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = text_splitter.split_text(page_text)
-        
-        if not chunks:
-            return f"Error: Could not split the content from the URL into chunks."
+            if not page_text.strip():
+                return f"Error: No text content could be extracted from the URL: {url}"
 
-        chunk_embeddings = embedding_model.embed_documents(chunks)
-        query_embedding = embedding_model.embed_query(query)
+            text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            chunks = text_splitter.split_text(page_text)
+            
+            if not chunks:
+                return f"Error: Could not split the content from the URL into chunks."
 
-        all_chunks = []
-        for i, chunk_embedding in enumerate(chunk_embeddings):
-            similarity = _cosine_similarity(query_embedding, chunk_embedding)
-            all_chunks.append({"text": chunks[i], "score": similarity})
-        
-        sorted_chunks = sorted(all_chunks, key=lambda x: x["score"], reverse=True)
-        top_chunks = sorted_chunks[:3]
+            chunk_embeddings = embedding_model.embed_documents(chunks)
+            query_embedding = embedding_model.embed_query(query)
 
-        if not top_chunks or top_chunks[0]["score"] < 0.7:
-            return "Could not find any relevant information in the source URI for that query."
+            all_chunks = []
+            for i, chunk_embedding in enumerate(chunk_embeddings):
+                similarity = self._cosine_similarity(query_embedding, chunk_embedding)
+                all_chunks.append({"text": chunks[i], "score": similarity})
+            
+            sorted_chunks = sorted(all_chunks, key=lambda x: x["score"], reverse=True)
+            top_chunks = sorted_chunks[:3]
 
-        combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
-        return f"Found relevant information from the source URI:\n\n{combined_context}"
+            if not top_chunks or top_chunks[0]["score"] < 0.7:
+                return "Could not find any relevant information in the source URI for that query."
 
-    except httpx.RequestError as e:
-        return f"Error: Failed to fetch the content from the provided URL: {e}"
-    except Exception as e:
-        return f"An unexpected error occurred while processing the URI: {e}"
+            combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
+            return f"Found relevant information from the source URI:\n\n{combined_context}"
+
+        except httpx.RequestError as e:
+            return f"Error: Failed to fetch the content from the provided URL: {e}"
+        except Exception as e:
+            return f"An unexpected error occurred while processing the URI: {e}"
 
 def get_uri_source_tool(settings: Dict[str, Any], name: str) -> Tool:
     """
-    Creates a configured tool for querying a live web page.
+    Creates a configured tool for querying a live web page using a class-based approach.
     """
-    configured_func = partial(_read_uri_logic, settings)
+    searcher = URISearcher(settings=settings)
     
     return Tool(
         name=name,
-        func=configured_func,
+        func=searcher.search,
         description=(
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."
         ),
         args_schema=URISourceInput
     )
+

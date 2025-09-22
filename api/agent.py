@@ -1,5 +1,3 @@
-# api/agent.py
-
 from langchain_community.chat_models import ChatOpenAI
 from langsmith import traceable
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
