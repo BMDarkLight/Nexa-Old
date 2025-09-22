@@ -13,28 +13,22 @@ embedding_model = OpenAIEmbeddings()
 class URISourceInput(BaseModel):
     query: str = Field(description="The question or topic to search for within the web page content.")
 
-class URISearcher:
-    def __init__(self, settings: Dict[str, Any]):
-        """Initializes the searcher with the specific settings for this tool instance."""
-        self.settings = settings
+def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    vec1 = np.array(vec1)
+    vec2 = np.array(vec2)
+    dot_product = np.dot(vec1, vec2)
+    norm1 = np.linalg.norm(vec1)
+    norm2 = np.linalg.norm(vec2)
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return dot_product / (norm1 * norm2)
 
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        """Calculates the cosine similarity between two vectors."""
-        vec1 = np.array(vec1)
-        vec2 = np.array(vec2)
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        return dot_product / (norm1 * norm2)
-
-    def search(self, query: str) -> str:
-        """
-        The main tool logic, now a method of the class. It fetches, processes, 
-        and finds the most relevant text chunk from the live URI.
-        """
-        url = self.settings.get("url")
+def get_uri_source_tool(settings: Dict[str, Any], name: str) -> Tool:
+    """
+    Factory that creates a configured tool using a closure to ensure serialization.
+    """
+    def _run_tool(query: str) -> str:
+        url = settings.get("url")
         if not url:
             return "Error: Connector is misconfigured. A 'url' is missing from its settings."
 
@@ -59,7 +53,7 @@ class URISearcher:
 
             all_chunks = []
             for i, chunk_embedding in enumerate(chunk_embeddings):
-                similarity = self._cosine_similarity(query_embedding, chunk_embedding)
+                similarity = _cosine_similarity(query_embedding, chunk_embedding)
                 all_chunks.append({"text": chunks[i], "score": similarity})
             
             sorted_chunks = sorted(all_chunks, key=lambda x: x["score"], reverse=True)
@@ -76,15 +70,9 @@ class URISearcher:
         except Exception as e:
             return f"An unexpected error occurred while processing the URI: {e}"
 
-def get_uri_source_tool(settings: Dict[str, Any], name: str) -> Tool:
-    """
-    Creates a configured tool for querying a live web page using a class-based approach.
-    """
-    searcher = URISearcher(settings=settings)
-    
     return Tool(
         name=name,
-        func=searcher.search,
+        func=_run_tool,
         description=(
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."

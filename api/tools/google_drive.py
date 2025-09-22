@@ -12,25 +12,17 @@ from pydantic import BaseModel, Field
 class GoogleDriveInput(BaseModel):
     file_id: str = Field(description="The unique ID of the Google Drive file to read.")
 
-class GoogleDriveReader:
-    def __init__(self, settings: Dict[str, Any]):
-        """Initializes the reader with the specific credentials for this tool instance."""
-        self.settings = settings
-
-    def read(self, file_id: str) -> str:
-        """
-        The main tool logic, now a method of the class. It reads a file from Google Drive.
-        """
+def get_google_drive_tool(settings: Dict[str, Any], name: str) -> Tool:
+    """
+    Factory that creates a configured tool using a closure to ensure serialization.
+    """
+    def _run_tool(file_id: str) -> str:
         try:
-            creds_info = self.settings
+            creds_info = settings
             if not creds_info:
                 return "Error: Service account information not found in connector settings."
-
             if isinstance(creds_info, str):
-                try:
-                    creds_info = json.loads(creds_info)
-                except json.JSONDecodeError:
-                    return "Error: The provided settings string is not valid JSON."
+                creds_info = json.loads(creds_info)
 
             scopes = ['https://www.googleapis.com/auth/drive.readonly']
             creds = service_account.Credentials.from_service_account_info(creds_info, scopes=scopes)
@@ -59,18 +51,13 @@ class GoogleDriveReader:
         except Exception as e:
             return f"An unexpected error occurred: {e}"
 
-def get_google_drive_tool(settings: Dict[str, Any], name: str) -> Tool:
-    """
-    Creates a configured tool for reading a Google Drive file using a class-based approach.
-    """
-    drive_reader = GoogleDriveReader(settings=settings)
-    
     return Tool(
         name=name,
-        func=drive_reader.read,
+        func=_run_tool,
         description=(
             "Use this tool to read the content of a specific file from Google Drive. "
             "This is best for text-based files like .txt, .csv, .md, etc."
         ),
         args_schema=GoogleDriveInput.model_json_schema()
     )
+

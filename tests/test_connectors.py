@@ -1,7 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 from bson import ObjectId
-from datetime import datetime, timezone
+import datetime
+from datetime import timezone
 
 from api.main import app, pwd_context
 from api.auth import users_db, orgs_db
@@ -105,7 +106,7 @@ def test_delete_connector_and_verify_pull_from_agent(org_admin_token):
 async def test_agent_logic_with_refactored_connector(org_admin_token):
     """
     Tests that get_agent_components correctly configures and attaches a tool
-    from a connector using the new, robust class-based factory pattern.
+    from a connector using the final, robust closure-based factory pattern.
     """
     _, org_id = org_admin_token
     
@@ -150,13 +151,19 @@ async def test_agent_logic_with_refactored_connector(org_admin_token):
     
     assert configured_tool.name == "google_sheet_logic_test_sheet"
     
-    assert callable(configured_tool.func), "Tool's function should be a callable method"
+    assert callable(configured_tool.func), "Tool's function should be a callable function"
     
-    tool_instance = configured_tool.func.__self__
-    assert hasattr(tool_instance, 'settings'), "Tool instance should have a 'settings' attribute"
-    
-    prefilled_settings = tool_instance.settings
-    assert prefilled_settings == connector_settings, "The settings in the tool instance do not match the database"
+    assert hasattr(configured_tool.func, '__closure__') and configured_tool.func.__closure__ is not None, \
+        "Tool's function should be a closure to capture settings"
+
+    captured_settings = None
+    for cell in configured_tool.func.__closure__:
+        captured_settings = cell.cell_contents
+        break
+
+    assert captured_settings is not None, "Could not retrieve settings from the tool's closure"
+    assert captured_settings == connector_settings, "The settings captured by the closure do not match the database"
 
     connectors_db.delete_one({"_id": connector_id})
     agents_db.delete_one({"_id": agent_result.inserted_id})
+

@@ -18,34 +18,28 @@ embedding_model = OpenAIEmbeddings()
 class PDFSourceInput(BaseModel):
     query: str = Field(description="The question or topic to search for within the PDF document.")
 
-class PDFSearcher:
-    def __init__(self, settings: Dict[str, Any]):
-        """Initializes the searcher with the specific settings for this tool instance."""
-        self.settings = settings
+def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    vec1 = np.array(vec1)
+    vec2 = np.array(vec2)
+    dot_product = np.dot(vec1, vec2)
+    norm1 = np.linalg.norm(vec1)
+    norm2 = np.linalg.norm(vec2)
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    return dot_product / (norm1 * norm2)
 
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        """Calculates the cosine similarity between two vectors."""
-        vec1 = np.array(vec1)
-        vec2 = np.array(vec2)
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        return dot_product / (norm1 * norm2)
-
-    def search(self, query: str) -> str:
-        """
-        The main tool logic, now a method of the class. It finds the most relevant 
-        text chunks from a stored PDF embedding.
-        """
+def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> Tool:
+    """
+    Factory that creates a configured tool using a closure to ensure serialization.
+    """
+    def _run_tool(query: str) -> str:
         TOP_K = 3
         SIMILARITY_THRESHOLD = 0.75
 
         if not knowledge_db:
             return "Error: Database connection for the knowledge base is not available."
 
-        document_id = self.settings.get("document_id")
+        document_id = settings.get("document_id")
         if not document_id:
             return "Error: Connector is misconfigured. 'document_id' is missing from its settings."
 
@@ -62,7 +56,7 @@ class PDFSearcher:
         all_chunks = []
         for chunk in source_document.get("chunks", []):
             if "text" in chunk and "embedding" in chunk:
-                similarity = self._cosine_similarity(query_embedding, chunk["embedding"])
+                similarity = _cosine_similarity(query_embedding, chunk["embedding"])
                 all_chunks.append({"text": chunk["text"], "score": similarity})
 
         sorted_chunks = sorted(all_chunks, key=lambda x: x["score"], reverse=True)
@@ -72,18 +66,11 @@ class PDFSearcher:
             return "Could not find any relevant information in the document for that query."
 
         combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
-        
         return f"Found relevant information in the document:\n\n{combined_context}"
 
-def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> Tool:
-    """
-    Creates a configured tool for querying PDF embeddings using a class-based approach.
-    """
-    searcher = PDFSearcher(settings=settings)
-    
     return Tool(
         name=name,
-        func=searcher.search,
+        func=_run_tool,
         description=(
             "Use this tool to search for information within a specific, pre-loaded PDF document. "
             "Provide a clear question or query about the content you are looking for."
