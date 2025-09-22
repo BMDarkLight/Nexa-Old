@@ -89,6 +89,6 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> Tool:
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."
         ),
-        args_schema=URISourceInput
+        args_schema=URISourceInput.model_json_schema()
     )
 
