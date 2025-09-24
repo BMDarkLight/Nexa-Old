@@ -70,6 +70,17 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
         except Exception as e:
             return f"An unexpected error occurred while processing the URI: {e}"
 
+    args_schema = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The question or topic to search for within the web page content."
+            }
+        },
+        "required": ["query"]
+    }
+
     return StructuredTool.from_function(
         name=name,
         func=_run_tool,
@@ -77,6 +88,5 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."
         ),
-        model_class=URISourceInput
+        args_schema=args_schema
     )
-

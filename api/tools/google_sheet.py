@@ -44,6 +44,19 @@ def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool
         except Exception as e:
             return f"An unexpected error occurred: {e}"
 
+    args_schema = {
+        "spreadsheet_id": {
+            "type": "string",
+            "description": "The unique ID of the Google Sheet to read from.",
+            "required": True,
+        },
+        "range_name": {
+            "type": "string",
+            "description": "The range of cells to read in A1 notation (e.g., 'Sheet1!A1:B10').",
+            "required": True,
+        },
+    }
+
     return StructuredTool.from_function(
         name=name,
         func=_run_tool,
@@ -51,5 +64,5 @@ def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool
             "Reads data from a specific range within a Google Sheet. "
             "Provide the spreadsheet_id and the cell range in A1 notation (e.g., 'Sheet1!A1:B10')."
         ),
-        model_class=GoogleSheetInput
+        args_schema=args_schema
     )

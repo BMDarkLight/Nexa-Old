@@ -51,6 +51,14 @@ def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool
         except Exception as e:
             return f"An unexpected error occurred: {e}"
 
+    args_schema = {
+        "file_id": {
+            "type": "string",
+            "description": "The unique ID of the Google Drive file to read.",
+            "required": True
+        }
+    }
+
     return StructuredTool.from_function(
         name=name,
         func=_run_tool,
@@ -58,5 +66,5 @@ def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool
             "Use this tool to read the content of a specific file from Google Drive. "
             "This is best for text-based files like .txt, .csv, .md, etc."
         ),
-        model_class=GoogleDriveInput
+        args_schema=args_schema
     )

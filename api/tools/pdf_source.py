@@ -68,6 +68,17 @@ def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
         combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
         return f"Found relevant information in the document:\n\n{combined_context}"
 
+    args_schema = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The question or topic to search for within the PDF document."
+            }
+        },
+        "required": ["query"]
+    }
+
     return StructuredTool.from_function(
         name=name,
         func=_run_tool,
@@ -75,6 +86,5 @@ def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
             "Use this tool to search for information within a specific, pre-loaded PDF document. "
             "Provide a clear question or query about the content you are looking for."
         ),
-        model_class=PDFSourceInput
+        args_schema=args_schema
     )
-
