@@ -6,13 +6,13 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2 import service_account
-from langchain.tools import Tool
+from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 class GoogleDriveInput(BaseModel):
     file_id: str = Field(description="The unique ID of the Google Drive file to read.")
 
-def get_google_drive_tool(settings: Dict[str, Any], name: str) -> Tool:
+def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
     """
     Factory that creates a configured tool using a closure to ensure serialization.
     """
@@ -51,13 +51,12 @@ def get_google_drive_tool(settings: Dict[str, Any], name: str) -> Tool:
         except Exception as e:
             return f"An unexpected error occurred: {e}"
 
-    return Tool(
+    return StructuredTool.from_function(
         name=name,
         func=_run_tool,
         description=(
             "Use this tool to read the content of a specific file from Google Drive. "
             "This is best for text-based files like .txt, .csv, .md, etc."
         ),
-        args_schema=GoogleDriveInput.model_json_schema()
+        args_schema=GoogleDriveInput
     )
-

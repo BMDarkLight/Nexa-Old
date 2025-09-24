@@ -4,14 +4,14 @@ from typing import Dict, Any
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from langchain.tools import Tool
+from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 class GoogleSheetInput(BaseModel):
     spreadsheet_id: str = Field(description="The unique ID of the Google Sheet to read from.")
     range_name: str = Field(description="The range of cells to read in A1 notation (e.g., 'Sheet1!A1:B10').")
 
-def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> Tool:
+def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
     """
     Factory that creates a configured tool using a closure to ensure serialization.
     """
@@ -44,12 +44,12 @@ def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> Tool:
         except Exception as e:
             return f"An unexpected error occurred: {e}"
 
-    return Tool(
+    return StructuredTool.from_function(
         name=name,
         func=_run_tool,
         description=(
             "Reads data from a specific range within a Google Sheet. "
             "Provide the spreadsheet_id and the cell range in A1 notation (e.g., 'Sheet1!A1:B10')."
         ),
-        args_schema=GoogleSheetInput.model_json_schema()
+        args_schema=GoogleSheetInput
     )

@@ -5,7 +5,7 @@ import httpx
 from bs4 import BeautifulSoup
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
-from langchain.tools import Tool
+from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 embedding_model = OpenAIEmbeddings()
@@ -23,7 +23,7 @@ def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
         return 0.0
     return dot_product / (norm1 * norm2)
 
-def get_uri_source_tool(settings: Dict[str, Any], name: str) -> Tool:
+def get_uri_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
     """
     Factory that creates a configured tool using a closure to ensure serialization.
     """
@@ -70,13 +70,13 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> Tool:
         except Exception as e:
             return f"An unexpected error occurred while processing the URI: {e}"
 
-    return Tool(
+    return StructuredTool.from_function(
         name=name,
         func=_run_tool,
         description=(
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."
         ),
-        args_schema=URISourceInput.model_json_schema()
+        args_schema=URISourceInput
     )
 

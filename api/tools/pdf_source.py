@@ -3,7 +3,7 @@ from typing import Dict, Any, List
 import numpy as np
 from bson import ObjectId
 from langchain_community.embeddings import OpenAIEmbeddings
-from langchain.tools import Tool
+from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from pymongo import MongoClient
 
@@ -28,7 +28,7 @@ def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
         return 0.0
     return dot_product / (norm1 * norm2)
 
-def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> Tool:
+def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
     """
     Factory that creates a configured tool using a closure to ensure serialization.
     """
@@ -68,13 +68,13 @@ def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> Tool:
         combined_context = "\n\n---\n\n".join([chunk["text"] for chunk in top_chunks])
         return f"Found relevant information in the document:\n\n{combined_context}"
 
-    return Tool(
+    return StructuredTool.from_function(
         name=name,
         func=_run_tool,
         description=(
             "Use this tool to search for information within a specific, pre-loaded PDF document. "
             "Provide a clear question or query about the content you are looking for."
         ),
-        args_schema=PDFSourceInput.model_json_schema()
+        args_schema=PDFSourceInput
     )
 
