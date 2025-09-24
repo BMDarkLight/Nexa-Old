@@ -108,7 +108,7 @@ async def test_agent_logic_with_refactored_connector(org_admin_token):
     Tests that get_agent_components correctly configures and attaches a tool
     from a connector using the final, robust closure-based factory pattern.
     """
-    import functools
+    from api.tools.google_sheet import URIToolWrapper
 
     _, org_id = org_admin_token
     
@@ -157,14 +157,9 @@ async def test_agent_logic_with_refactored_connector(org_admin_token):
     
     configured_func = configured_tool.func
 
-    if isinstance(configured_func, functools.partial):
-        captured_settings = configured_func.keywords.get("settings")
-        assert captured_settings == connector_settings, "Partial did not capture settings correctly"
-    else:
-        assert hasattr(configured_func, "__closure__") and configured_func.__closure__ is not None, \
-            "Tool's function should be a closure to capture settings"
-        captured_settings = configured_func.__closure__[0].cell_contents
-        assert captured_settings == connector_settings, "The settings captured by the closure do not match the database"
+    assert callable(configured_func), "Tool's function should be callable"
+    assert isinstance(configured_func, URIToolWrapper), "Tool's function should be a URIToolWrapper instance capturing settings"
+    assert configured_func.settings == connector_settings, "The settings captured by the callable wrapper do not match the database"
 
     connectors_db.delete_one({"_id": connector_id})
     agents_db.delete_one({"_id": agent_result.inserted_id})

@@ -47,10 +47,15 @@ def _run_google_drive_tool(file_id: str, settings: Dict[str, Any]) -> str:
     except Exception as e:
         return f"An unexpected error occurred: {e}"
 
+class GoogleDriveToolCallable:
+    def __init__(self, settings: Dict[str, Any]):
+        self.settings = settings
+
+    def __call__(self, file_id: str) -> str:
+        return _run_google_drive_tool(file_id, self.settings)
+
+
 def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
-    """
-    Factory that creates a configured tool using a closure to ensure serialization.
-    """
     args_schema = {
         "file_id": {
             "type": "string",
@@ -58,13 +63,10 @@ def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool
             "required": True
         }
     }
-
-    def func(file_id: str) -> str:
-        return _run_google_drive_tool(file_id, settings)
-
+    callable_obj = GoogleDriveToolCallable(settings)
     return StructuredTool.from_function(
         name=name,
-        func=func,
+        func=callable_obj,
         description=(
             "Use this tool to read the content of a specific file from Google Drive. "
             "This is best for text-based files like .txt, .csv, .md, etc."

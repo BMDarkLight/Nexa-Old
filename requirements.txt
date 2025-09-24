@@ -3,7 +3,6 @@ fastapi==0.115.12
 fastapi-security==0.1.0
 uvicorn==0.21.1
 passlib[bcrypt]==1.7.4
-pydantic<2.0
 python-dotenv==1.0.0
 python-jose==3.5.0
 pymongo==4.13.2

@@ -11,14 +11,13 @@ class GoogleSheetInput(BaseModel):
     spreadsheet_id: str = Field(description="The unique ID of the Google Sheet to read from.")
     range_name: str = Field(description="The range of cells to read in A1 notation (e.g., 'Sheet1!A1:B10').")
 
-def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
-    """
-    Factory that creates a configured tool using a closure to ensure serialization.
-    """
+class URIToolWrapper:
+    def __init__(self, settings: Dict[str, Any]):
+        self.settings = settings
 
-    def _run_tool(spreadsheet_id: str, range_name: str) -> str:
+    def __call__(self, spreadsheet_id: str, range_name: str) -> str:
         try:
-            creds_info = settings
+            creds_info = self.settings
             if not creds_info:
                 return "Error: Service account information not found in connector settings."
             if isinstance(creds_info, str):
@@ -45,9 +44,15 @@ def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool
         except Exception as e:
             return f"An unexpected error occurred: {e}"
 
+def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
+    """
+    Factory that creates a configured tool using a serializable wrapper class.
+    """
+    tool_instance = URIToolWrapper(settings)
+
     return StructuredTool.from_function(
         name=name,
-        func=_run_tool,
+        func=tool_instance,
         description=(
             "Reads data from a specific range within a Google Sheet. "
             "Provide the spreadsheet_id and the cell range in A1 notation (e.g., 'Sheet1!A1:B10')."
