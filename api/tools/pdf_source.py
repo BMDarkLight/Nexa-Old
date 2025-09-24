@@ -80,9 +80,12 @@ def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
         "required": ["query"]
     }
 
+    def tool_func(query: str) -> str:
+        return _run_tool(query, settings=settings)
+
     return StructuredTool.from_function(
         name=name,
-        func=partial(_run_tool, settings=settings),
+        func=tool_func,
         description=(
             "Use this tool to search for information within a specific, pre-loaded PDF document. "
             "Provide a clear question or query about the content you are looking for."

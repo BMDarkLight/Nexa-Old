@@ -71,6 +71,10 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
     """
     Factory that creates a configured tool using a closure to ensure serialization.
     """
+
+    def tool_func(query: str) -> str:
+        return _run_tool(query, settings)
+
     args_schema = {
         "type": "object",
         "properties": {
@@ -84,7 +88,7 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
 
     return StructuredTool.from_function(
         name=name,
-        func=partial(_run_tool, settings=settings),
+        func=tool_func,
         description=(
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."
