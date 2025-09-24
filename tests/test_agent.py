@@ -12,6 +12,13 @@ from api.agent import sessions_db
 # Use the TestClient for making requests to your FastAPI app
 client = TestClient(app)
 
+def strip_metadata(text: str) -> str:
+    """Strip the metadata line '[Agent: ... | Session: ...]' from the response text and strip whitespace."""
+    lines = text.splitlines()
+    if lines and lines[0].startswith("[Agent:"):
+        return "\n".join(lines[1:]).strip()
+    return text.strip()
+
 # --- Fixtures ---
 
 @pytest.fixture(scope="module", autouse=True)
@@ -88,12 +95,12 @@ def test_ask_new_session(test_user_token, test_user):
     )
     
     assert resp.status_code == 200
-    assert resp.text == "Mocked Response"
-    session_id = resp.headers["X-Session-Id"]
+    response_text = strip_metadata(resp.text)
+    assert response_text == "Mocked Response"
     
-    session_doc = sessions_db.find_one({"session_id": session_id})
+    # Since the session ID is no longer in headers, find the session by user and chat history
+    session_doc = sessions_db.find_one({"user_id": str(test_user["_id"]), "chat_history.0.user": "Hello there"})
     assert session_doc is not None
-    assert session_doc["user_id"] == str(test_user["_id"])
     assert len(session_doc["chat_history"]) == 1
     assert session_doc["chat_history"][0]["user"] == "Hello there"
     assert session_doc["chat_history"][0]["assistant"] == "Mocked Response"
@@ -118,6 +125,7 @@ def test_ask_existing_session(test_user_token, test_user):
     )
 
     assert resp.status_code == 200
+    response_text = strip_metadata(resp.text)
     
     session_doc = sessions_db.find_one({"session_id": session_id})
     assert len(session_doc["chat_history"]) == 2

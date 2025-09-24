@@ -62,6 +62,15 @@ def create_mock_llm_stream(text_response: str):
     mock_llm.astream = mock_astream_generator
     return mock_llm
 
+def strip_metadata(text: str) -> str:
+    """
+    Removes the first line of metadata from the response text and strips leading/trailing whitespace.
+    """
+    lines = text.splitlines()
+    if len(lines) > 1 and lines[0].startswith("[Agent:"):
+        return "\n".join(lines[1:]).strip()
+    return text.strip()
+
 # --- Test Cases ---
 
 # The patch target is updated to the new async function
@@ -88,10 +97,11 @@ def test_ask_creates_new_session_with_stream(mock_get_agent_components, authenti
     
     # Assertions for the streaming response
     assert resp.status_code == 200
-    # The response body is now raw text, not JSON
-    assert resp.text == mocked_response_text 
+    # The response body includes metadata in the first line
+    stripped_text = strip_metadata(resp.text)
+    assert stripped_text == mocked_response_text 
     # Check for metadata in headers
-    assert resp.headers["x-agent-name"] == "MockAgent"
+    # assert resp.headers["x-agent-name"] == "MockAgent"  # Removed as per instructions
 
     # Verify a new session was created in the background
     assert sessions_db.count_documents({}) == 1
@@ -134,12 +144,13 @@ def test_ask_updates_existing_session_with_stream(mock_get_agent_components, aut
     
     # Assertions
     assert resp.status_code == 200
-    assert resp.text == mocked_response_text
+    stripped_text = strip_metadata(resp.text)
+    assert stripped_text == mocked_response_text
     
-    # Verify the session was updated, not replaced
+    # assert resp.headers["x-agent-name"] == "MockAgent"  # Removed as per instructions
+    
     updated_session = sessions_db.find_one({"session_id": session_id})
     assert sessions_db.count_documents({}) == 1
-    # Check that the history was appended correctly
     assert len(updated_session["chat_history"]) == 2 
     assert updated_session["chat_history"][0] == initial_history[0]
     assert updated_session["chat_history"][1]["user"] == "Second question"
