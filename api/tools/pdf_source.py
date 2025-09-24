@@ -75,6 +75,6 @@ def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
             "Use this tool to search for information within a specific, pre-loaded PDF document. "
             "Provide a clear question or query about the content you are looking for."
         ),
-        args_schema=PDFSourceInput
+        model_class=PDFSourceInput
     )
 

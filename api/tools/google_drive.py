@@ -58,5 +58,5 @@ def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool
             "Use this tool to read the content of a specific file from Google Drive. "
             "This is best for text-based files like .txt, .csv, .md, etc."
         ),
-        args_schema=GoogleDriveInput
+        model_class=GoogleDriveInput
     )

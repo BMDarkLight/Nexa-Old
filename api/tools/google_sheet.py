@@ -51,5 +51,5 @@ def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool
             "Reads data from a specific range within a Google Sheet. "
             "Provide the spreadsheet_id and the cell range in A1 notation (e.g., 'Sheet1!A1:B10')."
         ),
-        args_schema=GoogleSheetInput
+        model_class=GoogleSheetInput
     )
