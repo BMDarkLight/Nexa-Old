@@ -6,6 +6,7 @@ from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from pymongo import MongoClient
+from functools import partial
 
 try:
     knowledge_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.embeddings
@@ -81,7 +82,7 @@ def get_pdf_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
 
     return StructuredTool.from_function(
         name=name,
-        func=lambda query: _run_tool(query, settings),
+        func=partial(_run_tool, settings=settings),
         description=(
             "Use this tool to search for information within a specific, pre-loaded PDF document. "
             "Provide a clear question or query about the content you are looking for."

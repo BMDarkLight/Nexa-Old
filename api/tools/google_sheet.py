@@ -1,5 +1,6 @@
 import json
 from typing import Dict, Any
+from functools import partial
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -58,8 +59,7 @@ def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool
         },
     }
 
-    # Use a lightweight lambda to pass spreadsheet_id, range_name, and settings to _run_tool
-    tool_func = lambda spreadsheet_id, range_name: _run_tool(spreadsheet_id, range_name, settings)
+    tool_func = partial(_run_tool, settings=settings)
 
     return StructuredTool.from_function(
         name=name,

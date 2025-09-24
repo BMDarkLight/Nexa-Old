@@ -108,6 +108,8 @@ async def test_agent_logic_with_refactored_connector(org_admin_token):
     Tests that get_agent_components correctly configures and attaches a tool
     from a connector using the final, robust closure-based factory pattern.
     """
+    import functools
+
     _, org_id = org_admin_token
     
     connectors_db.delete_many({"org": org_id})
@@ -153,17 +155,16 @@ async def test_agent_logic_with_refactored_connector(org_admin_token):
     
     assert callable(configured_tool.func), "Tool's function should be a callable function"
     
-    assert hasattr(configured_tool.func, '__closure__') and configured_tool.func.__closure__ is not None, \
-        "Tool's function should be a closure to capture settings"
+    configured_func = configured_tool.func
 
-    captured_settings = None
-    for cell in configured_tool.func.__closure__:
-        captured_settings = cell.cell_contents
-        break
-
-    assert captured_settings is not None, "Could not retrieve settings from the tool's closure"
-    assert captured_settings == connector_settings, "The settings captured by the closure do not match the database"
+    if isinstance(configured_func, functools.partial):
+        captured_settings = configured_func.keywords.get("settings")
+        assert captured_settings == connector_settings, "Partial did not capture settings correctly"
+    else:
+        assert hasattr(configured_func, "__closure__") and configured_func.__closure__ is not None, \
+            "Tool's function should be a closure to capture settings"
+        captured_settings = configured_func.__closure__[0].cell_contents
+        assert captured_settings == connector_settings, "The settings captured by the closure do not match the database"
 
     connectors_db.delete_one({"_id": connector_id})
     agents_db.delete_one({"_id": agent_result.inserted_id})
-

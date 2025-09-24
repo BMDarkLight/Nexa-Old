@@ -1,6 +1,7 @@
 import io
 import json
 from typing import Dict, Any
+import functools
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -61,7 +62,7 @@ def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool
 
     return StructuredTool.from_function(
         name=name,
-        func=lambda file_id: _run_google_drive_tool(file_id, settings),
+        func=functools.partial(_run_google_drive_tool, settings=settings),
         description=(
             "Use this tool to read the content of a specific file from Google Drive. "
             "This is best for text-based files like .txt, .csv, .md, etc."

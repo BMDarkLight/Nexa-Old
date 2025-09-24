@@ -7,6 +7,7 @@ from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
+from functools import partial
 
 embedding_model = OpenAIEmbeddings()
 
@@ -83,7 +84,7 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
 
     return StructuredTool.from_function(
         name=name,
-        func=lambda query: _run_tool(query, settings),
+        func=partial(_run_tool, settings=settings),
         description=(
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."
