@@ -112,14 +112,11 @@ API_PORT = os.getenv("API_PORT", "8000")
 # --- Home Page ---
 @app.get("/", response_class=HTMLResponse)
 async def main_page():
-    with open("api/pages/home.html", "r", encoding="utf-8") as f:
+    with open("api/static/home.html", "r", encoding="utf-8") as f:
         html_content = f.read()
 
     return HTMLResponse(content=html_content)
 
-@app.get("/test-cors")
-async def test_cors():
-    return JSONResponse({"message": "CORS check"})
 
 # --- Authentication Routes ---
 class SignupModel(BaseModel):
