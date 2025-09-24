@@ -913,7 +913,7 @@ async def ask(
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
 
     chat_history = session.get("chat_history", []) if session else []
-    org_id = user.get("organization") if user.get("organization") else None
+    org_id = user.get("organization")
 
     llm, messages, agent_name, agent_id = await get_agent_components(
         question=query.query,
@@ -923,12 +923,14 @@ async def ask(
     )
 
     async def response_generator():
+        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+
         full_answer = ""
         async for chunk in llm.astream(messages):
             content = chunk.content or ""
             full_answer += content
             yield content
-        
+
         background_tasks.add_task(
             save_chat_history,
             session_id=session_id,
@@ -940,11 +942,10 @@ async def ask(
             agent_name=agent_name
         )
 
-    return StreamingResponse(response_generator(), media_type="text/plain", headers={
-        "X-Agent-Name": agent_name,
-        "X-Session-Id": session_id,
-        "Access-Control-Expose-Headers": "X-Agent-Name, X-Session-Id"
-    })
+    return StreamingResponse(
+        response_generator(),
+        media_type="text/plain; charset=utf-8"
+    )
 
 @app.post("/ask/regenerate/{message_num}")
 async def regenerate(
@@ -961,11 +962,11 @@ async def regenerate(
 
     if not user.get("organization") and user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="User is not associated with any organization.")
-    
+
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
-    
+
     if session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
 
@@ -975,7 +976,7 @@ async def regenerate(
 
     truncated_history = chat_history[:message_num]
     original_query = chat_history[message_num]['user']
-    org_id = user.get("organization") if user.get("organization") else None
+    org_id = user.get("organization")
 
     llm, messages, agent_name, agent_id_str = await get_agent_components(
         question=original_query,
@@ -985,12 +986,14 @@ async def regenerate(
     )
 
     async def response_generator():
+        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+
         full_answer = ""
         async for chunk in llm.astream(messages):
             content = chunk.content or ""
             full_answer += content
             yield content
-        
+
         background_tasks.add_task(
             replace_chat_history_from_point,
             session_id=session_id,
@@ -1002,12 +1005,10 @@ async def regenerate(
             agent_name=agent_name
         )
 
-    return StreamingResponse(response_generator(), media_type="text/plain", headers={
-        "X-Agent-Name": agent_name,
-        "X-Session-Id": session_id,
-        "Access-Control-Expose-Headers": "X-Agent-Name, X-Session-Id"
-    })
-
+    return StreamingResponse(
+        response_generator(),
+        media_type="text/plain; charset=utf-8"
+    )
 
 @app.post("/ask/edit/{message_num}")
 async def edit_message(
@@ -1028,20 +1029,20 @@ async def edit_message(
 
     if not user.get("organization") and user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="User is not associated with any organization.")
-    
+
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
-    
+
     if session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
 
     chat_history = session.get("chat_history", [])
     if message_num < 0 or message_num >= len(chat_history):
         raise HTTPException(status_code=400, detail="Invalid message number.")
-    
+
     history_for_llm = chat_history[:message_num]
-    org_id = user.get("organization") if user.get("organization") else None
+    org_id = user.get("organization")
 
     llm, messages, agent_name, agent_id_str = await get_agent_components(
         question=query,
@@ -1051,12 +1052,14 @@ async def edit_message(
     )
 
     async def response_generator():
+        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+
         full_answer = ""
         async for chunk in llm.astream(messages):
             content = chunk.content or ""
             full_answer += content
             yield content
-        
+
         background_tasks.add_task(
             update_chat_history_entry,
             session_id=session_id,
@@ -1065,12 +1068,10 @@ async def edit_message(
             new_answer=full_answer
         )
 
-    return StreamingResponse(response_generator(), media_type="text/plain", headers={
-        "X-Agent-Name": agent_name,
-        "X-Session-Id": session_id,
-        "Access-Control-Expose-Headers": "X-Agent-Name, X-Session-Id"
-    })
-
+    return StreamingResponse(
+        response_generator(),
+        media_type="text/plain; charset=utf-8"
+    )
 
 # --- Session Management Routes ---
 from langchain_community.chat_models import ChatOpenAI
