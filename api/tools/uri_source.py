@@ -94,7 +94,7 @@ def get_uri_source_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
 
     return StructuredTool(
         name=name,
-        func=wrapper,
+        func=wrapper.__call__,
         description=(
             "Use this tool to search for information within a specific web page (URI). "
             "It fetches the content live. Provide a clear question about what you are looking for."
