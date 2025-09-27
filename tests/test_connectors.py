@@ -103,7 +103,7 @@ def test_delete_connector_and_verify_pull_from_agent(org_admin_token):
     assert connectors_db.count_documents({"_id": connector_id}) == 0
 
 @pytest.mark.asyncio
-async def test_agent_logic_with_refactored_connector(org_admin_token):
+async def test_agent_logic(org_admin_token):
     """
     Tests that get_agent_components correctly configures and attaches a tool
     from a connector using the final, robust closure-based factory pattern.
@@ -158,8 +158,10 @@ async def test_agent_logic_with_refactored_connector(org_admin_token):
     configured_func = configured_tool.func
 
     assert callable(configured_func), "Tool's function should be callable"
-    assert isinstance(configured_func, URIToolWrapper), "Tool's function should be a URIToolWrapper instance capturing settings"
-    assert configured_func.settings == connector_settings, "The settings captured by the callable wrapper do not match the database"
+    assert hasattr(configured_func, "__self__"), "The tool's func should be a bound method of a wrapper"
+    wrapper_instance = configured_func.__self__
+    assert isinstance(wrapper_instance, URIToolWrapper), "The tool's func should be bound to a URIToolWrapper instance"
+    assert wrapper_instance.settings == connector_settings, "The settings captured by the wrapper instance do not match the database"
 
     connectors_db.delete_one({"_id": connector_id})
     agents_db.delete_one({"_id": agent_result.inserted_id})
