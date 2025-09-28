@@ -918,7 +918,7 @@ async def ask(
         )
     except Exception:
         async def error_response():
-            yield "[Agent: Unknown | Session: {}]\n\n".format(session_id)
+            yield f"[Agent: Unknown | Session: {session_id}]\n\n"
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
@@ -933,17 +933,17 @@ async def ask(
 
         formatted_messages = []
         for msg in messages:
-            role = msg.get("role", "user")
+            role = msg.get("role", "user").lower()
             content = msg.get("content", "")
-            if role.lower() == "system":
-                formatted_messages.append(SystemMessage(content=content))
-            elif role.lower() == "assistant":
-                formatted_messages.append(AIMessage(content=content))
+            if role == "system":
+                formatted_messages.append({"type": "system", "content": content})
+            elif role == "assistant":
+                formatted_messages.append({"type": "assistant", "content": content})
             else:
-                formatted_messages.append(HumanMessage(content=content))
+                formatted_messages.append({"type": "human", "content": content})
 
         async for chunk in graph.astream(formatted_messages):
-            content = chunk.content or ""
+            content = chunk.get("content", "")
             full_answer += content
             yield content
 
@@ -992,7 +992,7 @@ async def regenerate(
         )
     except Exception:
         async def error_response():
-            yield "[Agent: Unknown | Session: {}]\n\n".format(session_id)
+            yield f"[Agent: Unknown | Session: {session_id}]\n\n"
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
@@ -1007,17 +1007,17 @@ async def regenerate(
 
         formatted_messages = []
         for msg in messages:
-            role = msg.get("role", "user")
+            role = msg.get("role", "user").lower()
             content = msg.get("content", "")
-            if role.lower() == "system":
-                formatted_messages.append(SystemMessage(content=content))
-            elif role.lower() == "assistant":
-                formatted_messages.append(AIMessage(content=content))
+            if role == "system":
+                formatted_messages.append({"type": "system", "content": content})
+            elif role == "assistant":
+                formatted_messages.append({"type": "assistant", "content": content})
             else:
-                formatted_messages.append(HumanMessage(content=content))
+                formatted_messages.append({"type": "human", "content": content})
 
         async for chunk in graph.astream(formatted_messages):
-            content = chunk.content or ""
+            content = chunk.get("content", "")
             full_answer += content
             yield content
 
@@ -1069,7 +1069,7 @@ async def edit_message(
         )
     except Exception:
         async def error_response():
-            yield "[Agent: Unknown | Session: {}]\n\n".format(session_id)
+            yield f"[Agent: Unknown | Session: {session_id}]\n\n"
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
@@ -1084,17 +1084,17 @@ async def edit_message(
 
         formatted_messages = []
         for msg in messages:
-            role = msg.get("role", "user")
+            role = msg.get("role", "user").lower()
             content = msg.get("content", "")
-            if role.lower() == "system":
-                formatted_messages.append(SystemMessage(content=content))
-            elif role.lower() == "assistant":
-                formatted_messages.append(AIMessage(content=content))
+            if role == "system":
+                formatted_messages.append({"type": "system", "content": content})
+            elif role == "assistant":
+                formatted_messages.append({"type": "assistant", "content": content})
             else:
-                formatted_messages.append(HumanMessage(content=content))
+                formatted_messages.append({"type": "human", "content": content})
 
         async for chunk in graph.astream(formatted_messages):
-            content = chunk.content or ""
+            content = chunk.get("content", "")
             full_answer += content
             yield content
 
