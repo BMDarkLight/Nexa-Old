@@ -927,20 +927,33 @@ async def ask(
     agent_name = agent_graph["final_agent_name"]
     agent_id = agent_graph["final_agent_id"]
 
+    def map_type_to_role(msg_type):
+        # Map 'type' to 'role'
+        if msg_type is None:
+            return "user"
+        t = msg_type.lower()
+        if t == "system":
+            return "system"
+        elif t == "assistant":
+            return "assistant"
+        elif t == "human":
+            return "user"
+        else:
+            return t
+
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
 
         formatted_messages = []
         for msg in messages:
-            role = msg.get("role", "user").lower()
+            # Accept both 'type' and 'role', prefer 'type' if present
+            msg_type = msg.get("type")
+            role = map_type_to_role(msg_type) if msg_type is not None else map_type_to_role(msg.get("role"))
             content = msg.get("content", "")
-            if role == "system":
-                formatted_messages.append({"type": "system", "content": content})
-            elif role == "assistant":
-                formatted_messages.append({"type": "assistant", "content": content})
-            else:
-                formatted_messages.append({"type": "human", "content": content})
+            if content is None:
+                content = ""
+            formatted_messages.append({"role": role, "content": content})
 
         async for chunk in graph.astream(formatted_messages):
             content = chunk.get("content", "")
@@ -1001,20 +1014,31 @@ async def regenerate(
     agent_name = agent_graph["final_agent_name"]
     agent_id_str = agent_graph["final_agent_id"]
 
+    def map_type_to_role(msg_type):
+        if msg_type is None:
+            return "user"
+        t = msg_type.lower()
+        if t == "system":
+            return "system"
+        elif t == "assistant":
+            return "assistant"
+        elif t == "human":
+            return "user"
+        else:
+            return t
+
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
 
         formatted_messages = []
         for msg in messages:
-            role = msg.get("role", "user").lower()
+            msg_type = msg.get("type")
+            role = map_type_to_role(msg_type) if msg_type is not None else map_type_to_role(msg.get("role"))
             content = msg.get("content", "")
-            if role == "system":
-                formatted_messages.append({"type": "system", "content": content})
-            elif role == "assistant":
-                formatted_messages.append({"type": "assistant", "content": content})
-            else:
-                formatted_messages.append({"type": "human", "content": content})
+            if content is None:
+                content = ""
+            formatted_messages.append({"role": role, "content": content})
 
         async for chunk in graph.astream(formatted_messages):
             content = chunk.get("content", "")
@@ -1078,20 +1102,31 @@ async def edit_message(
     agent_name = agent_graph["final_agent_name"]
     agent_id_str = agent_graph["final_agent_id"]
 
+    def map_type_to_role(msg_type):
+        if msg_type is None:
+            return "user"
+        t = msg_type.lower()
+        if t == "system":
+            return "system"
+        elif t == "assistant":
+            return "assistant"
+        elif t == "human":
+            return "user"
+        else:
+            return t
+
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
 
         formatted_messages = []
         for msg in messages:
-            role = msg.get("role", "user").lower()
+            msg_type = msg.get("type")
+            role = map_type_to_role(msg_type) if msg_type is not None else map_type_to_role(msg.get("role"))
             content = msg.get("content", "")
-            if role == "system":
-                formatted_messages.append({"type": "system", "content": content})
-            elif role == "assistant":
-                formatted_messages.append({"type": "assistant", "content": content})
-            else:
-                formatted_messages.append({"type": "human", "content": content})
+            if content is None:
+                content = ""
+            formatted_messages.append({"role": role, "content": content})
 
         async for chunk in graph.astream(formatted_messages):
             content = chunk.get("content", "")
