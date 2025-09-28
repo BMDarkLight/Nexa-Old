@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, AsyncMock
 import asyncio
 
 from api.main import app, pwd_context
@@ -49,13 +49,15 @@ def strip_metadata(text: str) -> str:
     return text.strip()
 
 def create_mock_llm_stream(text_response: str):
-    """Creates a mock LLM with a fake async stream."""
-    mock_llm = MagicMock()
-    async def mock_astream_generator(*args, **kwargs):
-        for char in text_response:
-            yield MagicMock(content=char)
-            await asyncio.sleep(0)
-    mock_llm.astream = mock_astream_generator
+    """Creates a mock LLM that streams dictionary content."""
+    mock_llm = AsyncMock()
+    
+    async def mock_astream(*args, **kwargs):
+        # Yield a single chunk containing the whole response
+        yield {"content": text_response}
+        await asyncio.sleep(0)
+    
+    mock_llm.astream = mock_astream
     return mock_llm
 
 # --- Tests ---

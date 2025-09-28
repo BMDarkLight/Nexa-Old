@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Form, File, UploadFile, Query
+from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks, File, UploadFile
 from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,7 +6,7 @@ from fastapi.openapi.utils import get_openapi
 from passlib.context import CryptContext
 from dotenv import load_dotenv, find_dotenv
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from bson import ObjectId
 
 from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
@@ -928,7 +928,6 @@ async def ask(
     agent_id = agent_graph["final_agent_id"]
 
     def map_type_to_role(msg_type):
-        # Map 'type' to 'role'
         if msg_type is None:
             return "user"
         t = msg_type.lower()
@@ -945,17 +944,32 @@ async def ask(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
 
-        formatted_messages = []
-        for msg in messages:
-            # Accept both 'type' and 'role', prefer 'type' if present
-            msg_type = msg.get("type")
-            role = map_type_to_role(msg_type) if msg_type is not None else map_type_to_role(msg.get("role"))
-            content = msg.get("content", "")
-            if content is None:
-                content = ""
-            formatted_messages.append({"role": role, "content": content})
+        history_context = ""
+        for entry in chat_history:
+            user_msg = entry.get("user", "")
+            assistant_msg = entry.get("assistant", "")
+            if user_msg:
+                history_context += f"User: {user_msg}\n"
+            if assistant_msg:
+                history_context += f"Assistant: {assistant_msg}\n"
 
-        async for chunk in graph.astream(formatted_messages):
+        latest_message = None
+        for msg in messages[::-1]:
+            msg_type = msg.get("type") or msg.get("role")
+            if msg_type and str(msg_type).lower() in ("user", "human"):
+                latest_message = msg
+                break
+        if latest_message is None and messages:
+            latest_message = messages[-1]
+
+        if latest_message:
+            role = map_type_to_role(latest_message.get("type") or latest_message.get("role"))
+            content = (history_context + latest_message.get("content", "")).strip()
+            astream_input = {"role": role, "content": content}
+        else:
+            astream_input = {"role": "user", "content": (history_context + query.query).strip()}
+
+        async for chunk in graph.astream(astream_input):
             content = chunk.get("content", "")
             full_answer += content
             yield content
@@ -977,10 +991,12 @@ async def ask(
 async def regenerate(
     message_num: int,
     background_tasks: BackgroundTasks,
-    session_id: str = Form(...),
-    agent_id: Optional[str] = Form(None),
+    request: Request,
     token: str = Depends(oauth2_scheme)
 ):
+    data = await request.json()
+    session_id = data.get("session_id")
+    agent_id = data.get("agent_id")
     user = verify_token(token)
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
@@ -1031,16 +1047,30 @@ async def regenerate(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
 
-        formatted_messages = []
-        for msg in messages:
-            msg_type = msg.get("type")
-            role = map_type_to_role(msg_type) if msg_type is not None else map_type_to_role(msg.get("role"))
-            content = msg.get("content", "")
-            if content is None:
-                content = ""
-            formatted_messages.append({"role": role, "content": content})
+        history_context = ""
+        for entry in truncated_history:
+            user_msg = entry.get("user", "")
+            assistant_msg = entry.get("assistant", "")
+            if user_msg:
+                history_context += f"User: {user_msg}\n"
+            if assistant_msg:
+                history_context += f"Assistant: {assistant_msg}\n"
+        latest_message = None
+        for msg in messages[::-1]:
+            msg_type = msg.get("type") or msg.get("role")
+            if msg_type and str(msg_type).lower() in ("user", "human"):
+                latest_message = msg
+                break
+        if latest_message is None and messages:
+            latest_message = messages[-1]
+        if latest_message:
+            role = map_type_to_role(latest_message.get("type") or latest_message.get("role"))
+            content = (history_context + latest_message.get("content", "")).strip()
+            astream_input = {"role": role, "content": content}
+        else:
+            astream_input = {"role": "user", "content": (history_context + original_query).strip()}
 
-        async for chunk in graph.astream(formatted_messages):
+        async for chunk in graph.astream(astream_input):
             content = chunk.get("content", "")
             full_answer += content
             yield content
@@ -1062,11 +1092,13 @@ async def regenerate(
 async def edit_message(
     message_num: int,
     background_tasks: BackgroundTasks,
-    query: str = Form(...),
-    session_id: str = Form(...),
-    agent_id: Optional[str] = Form(None),
+    request: Request,
     token: str = Depends(oauth2_scheme)
 ):
+    data = await request.json()
+    query = data.get("query")
+    session_id = data.get("session_id")
+    agent_id = data.get("agent_id")
     user = verify_token(token)
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
@@ -1119,16 +1151,30 @@ async def edit_message(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
 
-        formatted_messages = []
-        for msg in messages:
-            msg_type = msg.get("type")
-            role = map_type_to_role(msg_type) if msg_type is not None else map_type_to_role(msg.get("role"))
-            content = msg.get("content", "")
-            if content is None:
-                content = ""
-            formatted_messages.append({"role": role, "content": content})
+        history_context = ""
+        for entry in truncated_history:
+            user_msg = entry.get("user", "")
+            assistant_msg = entry.get("assistant", "")
+            if user_msg:
+                history_context += f"User: {user_msg}\n"
+            if assistant_msg:
+                history_context += f"Assistant: {assistant_msg}\n"
+        latest_message = None
+        for msg in messages[::-1]:
+            msg_type = msg.get("type") or msg.get("role")
+            if msg_type and str(msg_type).lower() in ("user", "human"):
+                latest_message = msg
+                break
+        if latest_message is None and messages:
+            latest_message = messages[-1]
+        if latest_message:
+            role = map_type_to_role(latest_message.get("type") or latest_message.get("role"))
+            content = (history_context + latest_message.get("content", "")).strip()
+            astream_input = {"role": role, "content": content}
+        else:
+            astream_input = {"role": "user", "content": (history_context + query).strip()}
 
-        async for chunk in graph.astream(formatted_messages):
+        async for chunk in graph.astream(astream_input):
             content = chunk.get("content", "")
             full_answer += content
             yield content
