@@ -7,6 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pymongo import MongoClient
 import os
+from passlib.context import CryptContext
 
 def generate_random_string(length: int = 32) -> str:
     alphabet = string.ascii_letters + string.digits
@@ -40,3 +41,10 @@ def verify_token(token: str):
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+def verify_password(password: str, hashed: str) -> bool:
+    return pwd_context.verify(password, hashed)

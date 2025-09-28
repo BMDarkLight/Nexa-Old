@@ -9,7 +9,7 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 from bson import ObjectId
 
-from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
+from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db, hash_password, verify_password
 from api.mail import send_email
 
 import datetime
@@ -84,7 +84,7 @@ def create_initial_sysadmin():
             print("SYSADMIN_USERNAME or SYSADMIN_PASSWORD not set in env; skipping sysadmin creation")
             return
         
-        hashed_password = pwd_context.hash(password)
+        hashed_password = hash_password(password)
         user = {
             "username": username,
             "password": hashed_password,
@@ -133,7 +133,7 @@ class SignupModel(BaseModel):
 def signup(form_data: SignupModel):
     if users_db.find_one({"username":form_data.username}) or prospective_users_db.find_one({"username": form_data.username}):
         raise HTTPException(status_code=400, detail="User already exists")
-    hashed_password = pwd_context.hash(form_data.password)
+    hashed_password = hash_password(form_data.password)
     if orgs_db.find_one({"name": form_data.organization}):
         raise HTTPException(status_code=400, detail="Organization already exists")
     
@@ -178,7 +178,7 @@ class SigninModel(BaseModel):
 @app.post("/signin")
 def signin(form_data: OAuth2PasswordRequestForm = Depends()):
     user = users_db.find_one({"username": form_data.username})
-    if not user or not pwd_context.verify(form_data.password, user["password"]):
+    if not user or not verify_password(form_data.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     if user.get("status") == "pending":
@@ -243,7 +243,7 @@ def reset_password(form_data: ResetPasswordModel):
     if not user:
         raise HTTPException(status_code=404, detail="Invalid credentials")
     
-    hashed_password = pwd_context.hash(new_password)
+    hashed_password = hash_password(new_password)
     users_db.update_one(
         {"username": username},
         {
@@ -524,7 +524,7 @@ def invite_signin(
     
     username = user["username"]
 
-    hashed_password = pwd_context.hash(form_data.password)
+    hashed_password = hash_password(form_data.password)
 
     result = users_db.update_one(
         {"username": username},
@@ -624,7 +624,7 @@ def create_user(user: UserCreateModel, token: str = Depends(oauth2_scheme)):
     
     base_user_doc = {
         "username": user.username,
-        "password": pwd_context.hash(user.password),
+        "password": hash_password(user.password),
         "email": user.email,
         "firstname": user.firstname or "",
         "lastname": user.lastname or "",
