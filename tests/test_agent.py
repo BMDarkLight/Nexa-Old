@@ -1,15 +1,13 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 from bson import ObjectId
 import uuid
 
-# Assuming your app and dbs are accessible for testing
 from api.main import app, pwd_context
 from api.auth import users_db, orgs_db
 from api.agent import sessions_db
 
-# Use the TestClient for making requests to your FastAPI app
 client = TestClient(app)
 
 def strip_metadata(text: str) -> str:
@@ -19,11 +17,15 @@ def strip_metadata(text: str) -> str:
         return "\n".join(lines[1:]).strip()
     return text.strip()
 
+def auth_header(token):
+    """Helper function to create authorization headers."""
+    return {"Authorization": f"Bearer {token}"}
+
 # --- Fixtures ---
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_and_teardown_db():
-    """A fixture to clean the database before and after all tests in this module."""
+    """Clean databases before and after tests."""
     users_db.delete_many({})
     orgs_db.delete_many({})
     sessions_db.delete_many({})
@@ -34,7 +36,7 @@ def setup_and_teardown_db():
 
 @pytest.fixture(scope="module")
 def test_user():
-    """Creates a test organization and a standard user, returning the user document."""
+    """Create a test user with organization."""
     org = orgs_db.insert_one({"name": "AgentTestCorp"})
     org_id = org.inserted_id
     
@@ -51,7 +53,7 @@ def test_user():
 
 @pytest.fixture(scope="module")
 def test_user_token(test_user):
-    """Signs in the test user and returns a valid auth token."""
+    """Return valid auth token for test user."""
     resp = client.post("/signin", data={"username": test_user["username"], "password": "testpass"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
@@ -59,43 +61,34 @@ def test_user_token(test_user):
 @pytest.fixture(autouse=True)
 def mock_agent_graph(monkeypatch):
     """
-    Mocks the get_agent_graph function to prevent real LLM calls.
-    This fixture simulates async streaming from LangGraph-based agent.
+    Mocks get_agent_graph to return a dict instead of calling real LLM.
     """
     async def mock_get_agent_graph(*args, **kwargs):
-        # Simulate LangGraph's return: (llm, messages, agent_name, agent_id)
         mock_llm = MagicMock()
-        # This is an async generator that yields mock chunks
         async def async_iterator():
             yield MagicMock(content="Mocked ")
             yield MagicMock(content="Response")
         mock_llm.astream.return_value = async_iterator()
-        # The messages list can be empty for these tests
-        return mock_llm, [], "Mocked Agent", str(ObjectId())
-
-    # Patch the get_agent_graph function where it is used in the app's code.
+        return {
+            "graph": mock_llm,
+            "messages": [],
+            "final_agent_name": "Mocked Agent",
+            "final_agent_id": str(ObjectId())
+        }
     monkeypatch.setattr("api.main.get_agent_graph", mock_get_agent_graph)
 
-
-def auth_header(token):
-    """Helper function to create authorization headers."""
-    return {"Authorization": f"Bearer {token}"}
-
-# --- Test Cases ---
+# --- Tests ---
 
 def test_ask_new_session(test_user_token, test_user):
-    """Tests that a new session is created and history is saved on the first /ask call."""
     resp = client.post(
         "/ask",
         headers=auth_header(test_user_token),
         json={"query": "Hello there"}
     )
-    
     assert resp.status_code == 200
     response_text = strip_metadata(resp.text)
     assert response_text == "Mocked Response"
     
-    # Since the session ID is no longer in headers, find the session by user and chat history
     session_doc = sessions_db.find_one({"user_id": str(test_user["_id"]), "chat_history.0.user": "Hello there"})
     assert session_doc is not None
     assert len(session_doc["chat_history"]) == 1
@@ -103,7 +96,6 @@ def test_ask_new_session(test_user_token, test_user):
     assert session_doc["chat_history"][0]["assistant"] == "Mocked Response"
 
 def test_ask_existing_session(test_user_token, test_user):
-    """Tests that /ask correctly appends to an existing session's chat history."""
     session_id = str(uuid.uuid4())
     initial_history = [{
         "user": "Initial question", "assistant": "Initial answer",
@@ -120,20 +112,19 @@ def test_ask_existing_session(test_user_token, test_user):
         headers=auth_header(test_user_token),
         json={"query": "Follow-up question", "session_id": session_id}
     )
-
     assert resp.status_code == 200
     response_text = strip_metadata(resp.text)
     
     session_doc = sessions_db.find_one({"session_id": session_id})
     assert len(session_doc["chat_history"]) == 2
     assert session_doc["chat_history"][1]["user"] == "Follow-up question"
+    assert session_doc["chat_history"][1]["assistant"] == "Mocked Response"
 
 def test_ask_permission_denied_for_other_user_session(test_user_token):
-    """Ensures a user cannot access a session belonging to another user."""
     session_id = str(uuid.uuid4())
     sessions_db.insert_one({
         "session_id": session_id,
-        "user_id": str(ObjectId()),  # A different user's ID
+        "user_id": str(ObjectId()),  # Different user
         "chat_history": []
     })
 
@@ -142,11 +133,9 @@ def test_ask_permission_denied_for_other_user_session(test_user_token):
         headers=auth_header(test_user_token),
         json={"query": "Trying to access", "session_id": session_id}
     )
-    
     assert resp.status_code == 403
 
 def test_regenerate_message_success(test_user_token, test_user):
-    """Tests that regeneration correctly replaces the last message in the history."""
     session_id = str(uuid.uuid4())
     initial_history = [
         {"user": "Question 1", "assistant": "Answer 1"},
@@ -163,7 +152,6 @@ def test_regenerate_message_success(test_user_token, test_user):
         headers=auth_header(test_user_token),
         data={"session_id": session_id}
     )
-
     assert resp.status_code == 200
     
     session_doc = sessions_db.find_one({"session_id": session_id})
@@ -173,7 +161,6 @@ def test_regenerate_message_success(test_user_token, test_user):
     assert session_doc["chat_history"][1]["assistant"] == "Mocked Response"
 
 def test_edit_message_success(test_user_token, test_user):
-    """Tests that editing a message updates the correct entry and regenerates a response."""
     session_id = str(uuid.uuid4())
     initial_history = [
         {"user": "Original Question", "assistant": "Original Answer"},
@@ -190,7 +177,6 @@ def test_edit_message_success(test_user_token, test_user):
         headers=auth_header(test_user_token),
         data={"query": "Edited Question", "session_id": session_id}
     )
-
     assert resp.status_code == 200
     
     session_doc = sessions_db.find_one({"session_id": session_id})
@@ -198,3 +184,4 @@ def test_edit_message_success(test_user_token, test_user):
     assert session_doc["chat_history"][0]["user"] == "Edited Question"
     assert session_doc["chat_history"][0]["assistant"] == "Mocked Response"
     assert session_doc["chat_history"][1]["user"] == "Another Question"
+    assert session_doc["chat_history"][1]["assistant"] == "Another Answer"
