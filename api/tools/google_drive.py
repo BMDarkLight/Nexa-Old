@@ -6,11 +6,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2 import service_account
-from langchain.tools import StructuredTool
-from pydantic import BaseModel, Field
-
-class GoogleDriveInput(BaseModel):
-    file_id: str = Field(description="The unique ID of the Google Drive file to read.")
+from langchain.tools import tool
 
 def _run_google_drive_tool(file_id: str, settings: Dict[str, Any]) -> str:
     try:
@@ -47,29 +43,24 @@ def _run_google_drive_tool(file_id: str, settings: Dict[str, Any]) -> str:
     except Exception as e:
         return f"An unexpected error occurred: {e}"
 
-class GoogleDriveToolCallable:
-    def __init__(self, settings: Dict[str, Any]):
-        self.settings = settings
-
-    def __call__(self, file_id: str) -> str:
-        return _run_google_drive_tool(file_id, self.settings)
-
-
-def get_google_drive_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
-    args_schema = {
-        "file_id": {
-            "type": "string",
-            "description": "The unique ID of the Google Drive file to read.",
-            "required": True
-        }
-    }
-    callable_obj = GoogleDriveToolCallable(settings)
-    return StructuredTool.from_function(
-        name=name,
-        func=callable_obj.__call__,
+def get_google_drive_tool(settings: Dict[str, Any], name: str):
+    """
+    Factory function to create a Google Drive file reader tool.
+    Returns a @tool-decorated function that reads a file from Google Drive given its file_id.
+    """
+    @tool(
+        args_schema=None,
+        return_direct=True,
         description=(
             "Use this tool to read the content of a specific file from Google Drive. "
             "This is best for text-based files like .txt, .csv, .md, etc."
         ),
-        args_schema=args_schema
     )
+    def google_drive_tool(file_id: str) -> str:
+        """
+        Reads the content of a Google Drive file by file_id using the provided service account settings.
+        """
+        return _run_google_drive_tool(file_id, settings)
+
+    google_drive_tool.name = name
+    return google_drive_tool

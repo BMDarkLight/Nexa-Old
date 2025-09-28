@@ -2,7 +2,7 @@ from langchain_openai import ChatOpenAI
 from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from typing import TypedDict, Literal, List, Optional, Dict, Any
+from typing import TypedDict, Literal, List, Optional, Dict, Any, Tuple
 from pymongo import MongoClient
 from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict
@@ -119,12 +119,12 @@ class AgentState(TypedDict, total=False):
     answer: str
 
 @traceable
-async def get_agent_components(
+async def get_agent_graph(
     question: str,
     organization_id: ObjectId,
-    chat_history: list | None = None,
-    agent_id: str | None = None,
-) -> tuple:
+    chat_history: Optional[List[dict]] = None,
+    agent_id: Optional[str] = None,
+) -> Tuple:
     question = question.strip()
     chat_history = chat_history or []
     selected_agent = None
@@ -172,29 +172,41 @@ async def get_agent_components(
 
         return trimmed[-20:]
 
+    active_tools = []
+
+    async def get_search_web_tool():
+        from api.tools.web import get_search_web_tool
+        return get_search_web_tool()
+
+    builtin_tool_factories = {
+        "search_web": get_search_web_tool,
+    }
+
+    connector_tool_factory_map = {
+        "google_sheet": "api.tools.google_sheet.get_google_sheet_tool",
+        "google_drive": "api.tools.google_drive.get_google_drive_tool",
+        "source_pdf": "api.tools.pdf_source.get_pdf_source_tool",
+        "source_uri": "api.tools.uri_source.get_uri_source_tool"
+    }
+
     if selected_agent:
-        active_tools = []
         for tool_name in selected_agent.get("tools", []):
-            if tool_name == "search_web":
-                from api.tools.web import search_web
-                active_tools.append(search_web)
-        tool_factory_map = {
-            "google_sheet": "api.tools.google_sheet.get_google_sheet_tool",
-            "google_drive": "api.tools.google_drive.get_google_drive_tool",
-            "source_pdf": "api.tools.pdf_source.get_pdf_source_tool",
-            "source_uri": "api.tools.uri_source.get_uri_source_tool"
-        }
+            factory = builtin_tool_factories.get(tool_name)
+            if factory:
+                tool = await factory()
+                active_tools.append(tool)
+
         connector_ids = selected_agent.get("connector_ids", [])
         if connector_ids:
             agent_connectors = list(connectors_db.find({"_id": {"$in": connector_ids}}))
+            import importlib
             for connector in agent_connectors:
                 connector_type = connector.get("connector_type")
-                tool_factory_path = tool_factory_map.get(connector_type)
+                tool_factory_path = connector_tool_factory_map.get(connector_type)
                 if not tool_factory_path:
                     continue
 
                 module_path, func_name = tool_factory_path.rsplit(".", 1)
-                import importlib
                 tool_factory = getattr(importlib.import_module(module_path), func_name)
                 tool_name = _clean_tool_name(connector["name"], connector_type)
                 new_tool = tool_factory(
@@ -211,8 +223,8 @@ async def get_agent_components(
             temperature=selected_agent.get("temperature", 0.7),
             streaming=True,
             max_retries=3
-        ).with_config(system_message=system_prompt)
-        agent = create_react_agent(agent_llm, active_tools, pre_model_hook=pre_model_hook)
+        )
+        graph = create_react_agent(agent_llm, active_tools, pre_model_hook=pre_model_hook, system_message=system_prompt)
     else:
         system_prompt = "You are a helpful general-purpose assistant."
         final_agent_id = None
@@ -220,9 +232,10 @@ async def get_agent_components(
         agent_llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.7,
+            streaming=True,
             max_retries=3
-        ).with_config(system_message=system_prompt)
-        agent = create_react_agent(agent_llm, [], pre_model_hook=pre_model_hook)
+        )
+        graph = create_react_agent(agent_llm, [], pre_model_hook=pre_model_hook, system_message=system_prompt)
 
     messages = [SystemMessage(content=system_prompt)]
     for entry in chat_history:
@@ -231,7 +244,7 @@ async def get_agent_components(
     messages.append(HumanMessage(content=question))
 
     return (
-        agent,
+        graph,
         messages,
         final_agent_name,
         str(final_agent_id) if final_agent_id else None,

@@ -825,19 +825,18 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"User '{username}' deleted."}
 
 # --- Agent Routes ---
-from api.agent import get_agent_components, sessions_db, agents_db, connectors_db
-from langchain.schema import HumanMessage
+from api.agent import get_agent_graph, sessions_db, agents_db, connectors_db
 import uuid
+from fastapi import BackgroundTasks, Depends, Form
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from bson import ObjectId
+from api.auth import verify_token, oauth2_scheme
 
 class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
-
-class QueryResponse(BaseModel):
-    agent_name: str
-    response: str
-    session_id: str
 
 def save_chat_history(session_id: str, user_id: str, chat_history: list, query: str, answer: str, agent_id: str, agent_name: str):
     new_history_entry = {
@@ -866,9 +865,9 @@ def update_chat_history_entry(session_id: str, message_num: int, new_query: str,
 
 def replace_chat_history_from_point(session_id: str, user_id: str, truncated_history: list, query: str, new_answer: str, agent_id: str, agent_name: str):
     new_entry = {
-        "user": query, 
-        "assistant": new_answer, 
-        "agent_id": agent_id, 
+        "user": query,
+        "assistant": new_answer,
+        "agent_id": agent_id,
         "agent_name": agent_name
     }
     final_history = truncated_history + [new_entry]
@@ -879,43 +878,23 @@ def replace_chat_history_from_point(session_id: str, user_id: str, truncated_his
 
 @app.post("/ask")
 async def ask(
-    query: QueryRequest, 
-    background_tasks: BackgroundTasks, 
+    query: QueryRequest,
+    background_tasks: BackgroundTasks,
     token: str = Depends(oauth2_scheme)
 ):
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise e
-
+    user = verify_token(token)
     if not query.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-    if not user.get("organization") and user.get("permission") != "sysadmin":
-        raise HTTPException(status_code=403, detail="User is not associated with any organization.")
-
-    agent_id_to_use = None
-    if query.agent_id:
-        if not ObjectId.is_valid(query.agent_id):
-            raise HTTPException(status_code=400, detail="Invalid agent_id format.")
-        agent_query = {"_id": ObjectId(query.agent_id)}
-        if user.get("permission") != "sysadmin":
-            agent_query["org"] = user["organization"]
-        agent = agents_db.find_one(agent_query)
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to use it.")
-        agent_id_to_use = query.agent_id
-
+    agent_id_to_use = query.agent_id
     session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})
-
     if session and session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
-
     chat_history = session.get("chat_history", []) if session else []
     org_id = user.get("organization")
 
-    llm, messages, agent_name, agent_id = await get_agent_components(
+    llm, messages, agent_name, agent_id = await get_agent_graph(
         question=query.query,
         organization_id=org_id,
         chat_history=chat_history,
@@ -924,7 +903,6 @@ async def ask(
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-
         full_answer = ""
         async for chunk in llm.astream(messages):
             content = chunk.content or ""
@@ -942,10 +920,7 @@ async def ask(
             agent_name=agent_name
         )
 
-    return StreamingResponse(
-        response_generator(),
-        media_type="text/plain; charset=utf-8"
-    )
+    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
 @app.post("/ask/regenerate/{message_num}")
 async def regenerate(
@@ -955,30 +930,22 @@ async def regenerate(
     agent_id: Optional[str] = Form(None),
     token: str = Depends(oauth2_scheme)
 ):
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise e
-
-    if not user.get("organization") and user.get("permission") != "sysadmin":
-        raise HTTPException(status_code=403, detail="User is not associated with any organization.")
-
+    user = verify_token(token)
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
-
     if session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
 
     chat_history = session.get("chat_history", [])
     if message_num < 0 or message_num >= len(chat_history):
         raise HTTPException(status_code=400, detail="Invalid message number.")
-
+    
     truncated_history = chat_history[:message_num]
     original_query = chat_history[message_num]['user']
     org_id = user.get("organization")
 
-    llm, messages, agent_name, agent_id_str = await get_agent_components(
+    llm, messages, agent_name, agent_id_str = await get_agent_graph(
         question=original_query,
         organization_id=org_id,
         chat_history=truncated_history,
@@ -987,7 +954,6 @@ async def regenerate(
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-
         full_answer = ""
         async for chunk in llm.astream(messages):
             content = chunk.content or ""
@@ -1005,10 +971,7 @@ async def regenerate(
             agent_name=agent_name
         )
 
-    return StreamingResponse(
-        response_generator(),
-        media_type="text/plain; charset=utf-8"
-    )
+    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
 @app.post("/ask/edit/{message_num}")
 async def edit_message(
@@ -1019,21 +982,13 @@ async def edit_message(
     agent_id: Optional[str] = Form(None),
     token: str = Depends(oauth2_scheme)
 ):
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise e
-
+    user = verify_token(token)
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
-
-    if not user.get("organization") and user.get("permission") != "sysadmin":
-        raise HTTPException(status_code=403, detail="User is not associated with any organization.")
-
+    
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
-
     if session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
 
@@ -1044,7 +999,7 @@ async def edit_message(
     history_for_llm = chat_history[:message_num]
     org_id = user.get("organization")
 
-    llm, messages, agent_name, agent_id_str = await get_agent_components(
+    llm, messages, agent_name, agent_id_str = await get_agent_graph(
         question=query,
         organization_id=org_id,
         chat_history=history_for_llm,
@@ -1053,7 +1008,6 @@ async def edit_message(
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-
         full_answer = ""
         async for chunk in llm.astream(messages):
             content = chunk.content or ""
@@ -1068,10 +1022,7 @@ async def edit_message(
             new_answer=full_answer
         )
 
-    return StreamingResponse(
-        response_generator(),
-        media_type="text/plain; charset=utf-8"
-    )
+    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
 # --- Session Management Routes ---
 from langchain_community.chat_models import ChatOpenAI

@@ -4,20 +4,18 @@ from typing import Dict, Any
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from langchain.tools import StructuredTool
+from langchain.tools import tool
 from pydantic import BaseModel, Field
 
 class GoogleSheetInput(BaseModel):
     spreadsheet_id: str = Field(description="The unique ID of the Google Sheet to read from.")
     range_name: str = Field(description="The range of cells to read in A1 notation (e.g., 'Sheet1!A1:B10').")
 
-class URIToolWrapper:
-    def __init__(self, settings: Dict[str, Any]):
-        self.settings = settings
-
-    def __call__(self, spreadsheet_id: str, range_name: str) -> str:
+def get_google_sheet_tool(settings: Dict[str, Any], name: str):
+    @tool
+    def google_sheet_tool(spreadsheet_id: str, range_name: str) -> str:
         try:
-            creds_info = self.settings
+            creds_info = settings
             if not creds_info:
                 return "Error: Service account information not found in connector settings."
             if isinstance(creds_info, str):
@@ -44,18 +42,5 @@ class URIToolWrapper:
         except Exception as e:
             return f"An unexpected error occurred: {e}"
 
-def get_google_sheet_tool(settings: Dict[str, Any], name: str) -> StructuredTool:
-    """
-    Factory that creates a configured tool using a serializable wrapper class.
-    """
-    tool_instance = URIToolWrapper(settings)
-
-    return StructuredTool.from_function(
-        name=name,
-        func=tool_instance.__call__,
-        description=(
-            "Reads data from a specific range within a Google Sheet. "
-            "Provide the spreadsheet_id and the cell range in A1 notation (e.g., 'Sheet1!A1:B10')."
-        ),
-        args_schema=GoogleSheetInput
-    )
+    google_sheet_tool.name = name
+    return google_sheet_tool
