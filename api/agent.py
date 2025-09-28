@@ -124,7 +124,14 @@ async def get_agent_graph(
     organization_id: ObjectId,
     chat_history: Optional[List[dict]] = None,
     agent_id: Optional[str] = None,
-) -> Tuple:
+) -> Dict[str, Any]:
+    """
+    Returns a dict with:
+    - graph: the React agent graph
+    - messages: the chat history in dict form
+    - final_agent_name: the agent's name
+    - final_agent_id: the agent's id (str) or None
+    """
     question = question.strip()
     chat_history = chat_history or []
     selected_agent = None
@@ -169,7 +176,6 @@ async def get_agent_graph(
                     system_added = True
             else:
                 trimmed.append(m)
-
         return trimmed[-20:]
 
     active_tools = []
@@ -237,15 +243,15 @@ async def get_agent_graph(
         )
         graph = create_react_agent(agent_llm, [])
 
-    messages = [SystemMessage(content=system_prompt)]
+    messages_dict = [{"role": "system", "content": system_prompt}]
     for entry in chat_history:
-        messages.append(HumanMessage(content=entry["user"]))
-        messages.append(AIMessage(content=entry["assistant"]))
-    messages.append(HumanMessage(content=question))
+        messages_dict.append({"role": "user", "content": entry["user"]})
+        messages_dict.append({"role": "assistant", "content": entry["assistant"]})
+    messages_dict.append({"role": "user", "content": question})
 
-    return (
-        graph,
-        messages,
-        final_agent_name,
-        str(final_agent_id) if final_agent_id else None,
-    )
+    return {
+        "graph": graph,
+        "messages": messages_dict,
+        "final_agent_name": final_agent_name,
+        "final_agent_id": str(final_agent_id) if final_agent_id else None,
+    }

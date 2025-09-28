@@ -910,23 +910,39 @@ async def ask(
     org_id = user.get("organization")
 
     try:
-        llm, messages, agent_name, agent_id = await get_agent_graph(
+        agent_graph = await get_agent_graph(
             question=query.query,
             organization_id=org_id,
             chat_history=chat_history,
             agent_id=agent_id_to_use
         )
     except Exception:
-        # Safe fallback: return a generic response if agent graph fails
         async def error_response():
             yield "[Agent: Unknown | Session: {}]\n\n".format(session_id)
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
+    graph = agent_graph["graph"]
+    messages = agent_graph["messages"]
+    agent_name = agent_graph["final_agent_name"]
+    agent_id = agent_graph["final_agent_id"]
+
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
-        async for chunk in llm.astream(messages):
+
+        formatted_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role.lower() == "system":
+                formatted_messages.append(SystemMessage(content=content))
+            elif role.lower() == "assistant":
+                formatted_messages.append(AIMessage(content=content))
+            else:
+                formatted_messages.append(HumanMessage(content=content))
+
+        async for chunk in graph.astream(formatted_messages):
             content = chunk.content or ""
             full_answer += content
             yield content
@@ -962,13 +978,13 @@ async def regenerate(
     chat_history = session.get("chat_history", [])
     if message_num < 0 or message_num >= len(chat_history):
         raise HTTPException(status_code=400, detail="Invalid message number.")
-    
+
     truncated_history = chat_history[:message_num]
     original_query = chat_history[message_num]['user']
     org_id = user.get("organization")
 
     try:
-        llm, messages, agent_name, agent_id_str = await get_agent_graph(
+        agent_graph = await get_agent_graph(
             question=original_query,
             organization_id=org_id,
             chat_history=truncated_history,
@@ -980,10 +996,27 @@ async def regenerate(
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
+    graph = agent_graph["graph"]
+    messages = agent_graph["messages"]
+    agent_name = agent_graph["final_agent_name"]
+    agent_id_str = agent_graph["final_agent_id"]
+
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
-        async for chunk in llm.astream(messages):
+
+        formatted_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role.lower() == "system":
+                formatted_messages.append(SystemMessage(content=content))
+            elif role.lower() == "assistant":
+                formatted_messages.append(AIMessage(content=content))
+            else:
+                formatted_messages.append(HumanMessage(content=content))
+
+        async for chunk in graph.astream(formatted_messages):
             content = chunk.content or ""
             full_answer += content
             yield content
@@ -1013,7 +1046,7 @@ async def edit_message(
     user = verify_token(token)
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
-    
+
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
@@ -1024,14 +1057,14 @@ async def edit_message(
     if message_num < 0 or message_num >= len(chat_history):
         raise HTTPException(status_code=400, detail="Invalid message number.")
 
-    history_for_llm = chat_history[:message_num]
+    truncated_history = chat_history[:message_num]
     org_id = user.get("organization")
 
     try:
-        llm, messages, agent_name, agent_id_str = await get_agent_graph(
+        agent_graph = await get_agent_graph(
             question=query,
             organization_id=org_id,
-            chat_history=history_for_llm,
+            chat_history=truncated_history,
             agent_id=agent_id
         )
     except Exception:
@@ -1040,10 +1073,27 @@ async def edit_message(
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
+    graph = agent_graph["graph"]
+    messages = agent_graph["messages"]
+    agent_name = agent_graph["final_agent_name"]
+    agent_id_str = agent_graph["final_agent_id"]
+
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
-        async for chunk in llm.astream(messages):
+
+        formatted_messages = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role.lower() == "system":
+                formatted_messages.append(SystemMessage(content=content))
+            elif role.lower() == "assistant":
+                formatted_messages.append(AIMessage(content=content))
+            else:
+                formatted_messages.append(HumanMessage(content=content))
+
+        async for chunk in graph.astream(formatted_messages):
             content = chunk.content or ""
             full_answer += content
             yield content
