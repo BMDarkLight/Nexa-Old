@@ -944,6 +944,7 @@ async def ask(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
 
+        # include chat history in prompt context
         history_context = ""
         for entry in chat_history:
             user_msg = entry.get("user", "")
@@ -962,17 +963,17 @@ async def ask(
         if latest_message is None and messages:
             latest_message = messages[-1]
 
-        if latest_message:
-            role = map_type_to_role(latest_message.get("type") or latest_message.get("role"))
-            content = (history_context + latest_message.get("content", "")).strip()
-            astream_input = {"role": role, "content": content}
-        else:
-            astream_input = {"role": "user", "content": (history_context + query.query).strip()}
+        content = (history_context + (latest_message.get("content") if latest_message else query.query)).strip()
+        role = map_type_to_role(latest_message.get("type") if latest_message else "user")
+
+        # ✅ Wrap under 'messages' for Pregel
+        astream_input = {
+            "messages": [{"role": role, "content": content}]
+        }
 
         async for chunk in graph.astream(astream_input):
-            content = chunk.get("content", "")
-            full_answer += content
-            yield content
+            full_answer += chunk.get("content", "")
+            yield chunk.get("content", "")
 
         background_tasks.add_task(
             save_chat_history,
@@ -1021,8 +1022,7 @@ async def regenerate(
         )
     except Exception:
         async def error_response():
-            yield f"[Agent: Unknown | Session: {session_id}]\n\n"
-            yield "Sorry, there was an error processing your request. Please try again later."
+            yield f"[Agent: Unknown | Session: {session_id}]\n\nSorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph["graph"]
@@ -1034,41 +1034,16 @@ async def regenerate(
         if msg_type is None:
             return "user"
         t = msg_type.lower()
-        if t == "system":
-            return "system"
-        elif t == "assistant":
-            return "assistant"
-        elif t == "human":
-            return "user"
-        else:
-            return t
+        return {"system": "system", "assistant": "assistant", "human": "user"}.get(t, t)
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
-
-        history_context = ""
-        for entry in truncated_history:
-            user_msg = entry.get("user", "")
-            assistant_msg = entry.get("assistant", "")
-            if user_msg:
-                history_context += f"User: {user_msg}\n"
-            if assistant_msg:
-                history_context += f"Assistant: {assistant_msg}\n"
-        latest_message = None
-        for msg in messages[::-1]:
-            msg_type = msg.get("type") or msg.get("role")
-            if msg_type and str(msg_type).lower() in ("user", "human"):
-                latest_message = msg
-                break
-        if latest_message is None and messages:
-            latest_message = messages[-1]
-        if latest_message:
-            role = map_type_to_role(latest_message.get("type") or latest_message.get("role"))
-            content = (history_context + latest_message.get("content", "")).strip()
-            astream_input = {"role": role, "content": content}
-        else:
-            astream_input = {"role": "user", "content": (history_context + original_query).strip()}
+        history_context = "".join(f"User: {e.get('user','')}\nAssistant: {e.get('assistant','')}\n" for e in truncated_history)
+        latest_message = next((m for m in reversed(messages) if (m.get("type") or m.get("role") or "").lower() in ["user","human"]), messages[-1] if messages else None)
+        role = map_type_to_role(latest_message.get("type") if latest_message else "user")
+        content = (history_context + (latest_message.get("content") if latest_message else original_query)).strip()
+        astream_input = {"messages": [{"role": role, "content": content}]}
 
         async for chunk in graph.astream(astream_input):
             content = chunk.get("content", "")
@@ -1125,8 +1100,7 @@ async def edit_message(
         )
     except Exception:
         async def error_response():
-            yield f"[Agent: Unknown | Session: {session_id}]\n\n"
-            yield "Sorry, there was an error processing your request. Please try again later."
+            yield f"[Agent: Unknown | Session: {session_id}]\n\nSorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph["graph"]
@@ -1138,41 +1112,16 @@ async def edit_message(
         if msg_type is None:
             return "user"
         t = msg_type.lower()
-        if t == "system":
-            return "system"
-        elif t == "assistant":
-            return "assistant"
-        elif t == "human":
-            return "user"
-        else:
-            return t
+        return {"system": "system", "assistant": "assistant", "human": "user"}.get(t, t)
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
         full_answer = ""
-
-        history_context = ""
-        for entry in truncated_history:
-            user_msg = entry.get("user", "")
-            assistant_msg = entry.get("assistant", "")
-            if user_msg:
-                history_context += f"User: {user_msg}\n"
-            if assistant_msg:
-                history_context += f"Assistant: {assistant_msg}\n"
-        latest_message = None
-        for msg in messages[::-1]:
-            msg_type = msg.get("type") or msg.get("role")
-            if msg_type and str(msg_type).lower() in ("user", "human"):
-                latest_message = msg
-                break
-        if latest_message is None and messages:
-            latest_message = messages[-1]
-        if latest_message:
-            role = map_type_to_role(latest_message.get("type") or latest_message.get("role"))
-            content = (history_context + latest_message.get("content", "")).strip()
-            astream_input = {"role": role, "content": content}
-        else:
-            astream_input = {"role": "user", "content": (history_context + query).strip()}
+        history_context = "".join(f"User: {e.get('user','')}\nAssistant: {e.get('assistant','')}\n" for e in truncated_history)
+        latest_message = next((m for m in reversed(messages) if (m.get("type") or m.get("role") or "").lower() in ["user","human"]), messages[-1] if messages else None)
+        role = map_type_to_role(latest_message.get("type") if latest_message else "user")
+        content = (history_context + (latest_message.get("content") if latest_message else query)).strip()
+        astream_input = {"messages": [{"role": role, "content": content}]}
 
         async for chunk in graph.astream(astream_input):
             content = chunk.get("content", "")
