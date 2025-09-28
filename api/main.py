@@ -9,7 +9,7 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 from bson import ObjectId
 
-from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db, hash_password, verify_password
+from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
 from api.mail import send_email
 
 import datetime
@@ -72,6 +72,21 @@ import os
 import secrets
 import datetime
 
+def hash_password(password: str) -> str:
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    return pwd_context.hash(password_bytes)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    password_bytes = plain_password.encode("utf-8")
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    try:
+        return pwd_context.verify(password_bytes, hashed_password)
+    except Exception:
+        return False
+
 def create_initial_sysadmin():
     if users_db.count_documents({"permission": "sysadmin"}) < 1:
         username = os.getenv("SYSADMIN_USERNAME")
@@ -83,8 +98,8 @@ def create_initial_sysadmin():
         if not username or not password:
             print("SYSADMIN_USERNAME or SYSADMIN_PASSWORD not set in env; skipping sysadmin creation")
             return
-        
         hashed_password = hash_password(password)
+        now = datetime.datetime.now(datetime.timezone.utc)
         user = {
             "username": username,
             "password": hashed_password,
@@ -92,12 +107,11 @@ def create_initial_sysadmin():
             "lastname": lastname,
             "email": email,
             "phone": phone,
-            "created_at": datetime.datetime.now(datetime.UTC),
-            "updated_at": datetime.datetime.now(datetime.UTC),
+            "created_at": now,
+            "updated_at": now,
             "permission": "sysadmin",
         }
         user_result = users_db.insert_one(user)
-
         if user_result.acknowledged:
             print(f"Created initial sysadmin user: {username}")
         else:
@@ -136,7 +150,7 @@ def signup(form_data: SignupModel):
     hashed_password = hash_password(form_data.password)
     if orgs_db.find_one({"name": form_data.organization}):
         raise HTTPException(status_code=400, detail="Organization already exists")
-    
+    now = datetime.datetime.now(datetime.timezone.utc)
     result = prospective_users_db.insert_one({
         "username": form_data.username,
         "password": hashed_password,
@@ -145,8 +159,8 @@ def signup(form_data: SignupModel):
         "email": form_data.email,
         "phone": form_data.phone or "",
         "organization": None,
-        "created_at": datetime.datetime.utcnow(),
-        "updated_at": datetime.datetime.utcnow(),
+        "created_at": now,
+        "updated_at": now,
         "permission": "orgadmin"
     })
     user_id = result.inserted_id
@@ -157,8 +171,8 @@ def signup(form_data: SignupModel):
         "description": "",
         "plan": form_data.plan or "free",
         "settings": {},
-        "created_at": datetime.datetime.utcnow(),
-        "updated_at": datetime.datetime.utcnow()
+        "created_at": now,
+        "updated_at": now
     })
     org_id = result_org.inserted_id
     prospective_users_db.update_one(
@@ -244,17 +258,17 @@ def reset_password(form_data: ResetPasswordModel):
         raise HTTPException(status_code=404, detail="Invalid credentials")
     
     hashed_password = hash_password(new_password)
+    now = datetime.datetime.now(datetime.timezone.utc)
     users_db.update_one(
         {"username": username},
         {
             "$set": {
                 "password": hashed_password,
                 "reset_token": None,
-                "updated_at": datetime.datetime.now(datetime.UTC)
+                "updated_at": now
             }
         }
     )
-    
     return {"message": "Password reset successfully"}
 
 # --- Prospective Users Routes ---
@@ -278,6 +292,7 @@ def approve_signup(username: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=400, detail="User already exists")
     
     hashed_password = prospective_user["password"]
+    now = datetime.datetime.now(datetime.timezone.utc)
     result = users_db.insert_one({
         "username": prospective_user["username"],
         "password": hashed_password,
@@ -286,8 +301,8 @@ def approve_signup(username: str, token: str = Depends(oauth2_scheme)):
         "email": prospective_user["email"],
         "phone": prospective_user["phone"],
         "organization": prospective_user["organization"],
-        "created_at": datetime.datetime.utcnow(),
-        "updated_at": datetime.datetime.utcnow(),
+        "created_at": now,
+        "updated_at": now,
         "permission": prospective_user["permission"]
     })
     user_id = result.inserted_id
@@ -476,6 +491,7 @@ def invite_user(username: str, email: str,  background_tasks: BackgroundTasks = 
 
     invite_code = secrets.token_urlsafe(16)
 
+    now = datetime.datetime.now(datetime.timezone.utc)
     users_db.insert_one({
         "username": username,
         "email": email,
@@ -483,8 +499,8 @@ def invite_user(username: str, email: str,  background_tasks: BackgroundTasks = 
         "permission": "orguser",
         "invite_code": invite_code,
         "status": "pending",
-        "created_at": datetime.datetime.utcnow(),
-        "updated_at": datetime.datetime.utcnow()
+        "created_at": now,
+        "updated_at": now
     })
 
     background_tasks.add_task(
@@ -521,11 +537,10 @@ def invite_signin(
 
     if user.get("status") != "pending":
         raise HTTPException(status_code=403, detail="User is not in pending status")
-    
+
     username = user["username"]
-
     hashed_password = hash_password(form_data.password)
-
+    now = datetime.datetime.now(datetime.timezone.utc)
     result = users_db.update_one(
         {"username": username},
         {
@@ -535,7 +550,7 @@ def invite_signin(
                 "lastname": form_data.lastname,
                 "phone": form_data.phone or "",
                 "status": "active",
-                "updated_at": datetime.datetime.utcnow()
+                "updated_at": now
             },
             "$unset": {"invite_code": ""}
         }
@@ -548,19 +563,22 @@ def invite_signin(
         "organization": user["organization"],
         "permission": "orgadmin"
     })
+    organization = orgs_db.find_one({"_id": user["organization"]}) if user.get("organization") else None
+    org_name = organization["name"] if organization and "name" in organization else "your organization"
 
     if orgadmin and orgadmin.get("email"):
         background_tasks.add_task(
             send_email,
             to_email=orgadmin["email"],
             subject=f"Invited user {user['username']} has signed up.",
-            html_body=f"The user '{user['username']}' has completed their signup for the organization '{organization['name']}'."
+            html_body=f"The user '{user['username']}' has completed their signup for the organization '{org_name}'."
         )
 
+    if user.get("email"):
         background_tasks.add_task(
             send_email,
             to_email=user["email"],
-            subject=f"Welcome to {organization['name']}",
+            subject=f"Welcome to {org_name}",
             html_body=f"Your account has been successfully created, {form_data.firstname}!"
         )
 
@@ -622,6 +640,7 @@ def create_user(user: UserCreateModel, token: str = Depends(oauth2_scheme)):
     if users_db.find_one({"username": user.username}) or prospective_users_db.find_one({"username": user.username}):
         raise HTTPException(status_code=409, detail="User already exists.")
     
+    now = datetime.datetime.now(datetime.timezone.utc)
     base_user_doc = {
         "username": user.username,
         "password": hash_password(user.password),
@@ -629,8 +648,8 @@ def create_user(user: UserCreateModel, token: str = Depends(oauth2_scheme)):
         "firstname": user.firstname or "",
         "lastname": user.lastname or "",
         "phone": user.phone or "",
-        "created_at": datetime.datetime.utcnow(),
-        "updated_at": datetime.datetime.utcnow()
+        "created_at": now,
+        "updated_at": now
     }
     
     if user.permission == "sysadmin":
@@ -659,7 +678,7 @@ def create_user(user: UserCreateModel, token: str = Depends(oauth2_scheme)):
             "name": user.organization,
             "owner": user_id, "users": [user_id], "description": "",
             "plan": user.plan or "free", "settings": {},
-            "created_at": datetime.datetime.utcnow(), "updated_at": datetime.datetime.utcnow()
+            "created_at": now, "updated_at": now
         }
 
         org_result = orgs_db.insert_one(org_doc)
@@ -770,7 +789,7 @@ def update_user(
         if update_data["permission"] not in ["sysadmin", "orgadmin", "orguser"]:
             raise HTTPException(status_code=400, detail="Invalid permission value")
 
-    update_data["updated_at"] = datetime.datetime.utcnow()
+    update_data["updated_at"] = datetime.datetime.now(datetime.timezone.utc)
     result = users_db.update_one({"username": username}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
@@ -894,12 +913,19 @@ async def ask(
     chat_history = session.get("chat_history", []) if session else []
     org_id = user.get("organization")
 
-    llm, messages, agent_name, agent_id = await get_agent_graph(
-        question=query.query,
-        organization_id=org_id,
-        chat_history=chat_history,
-        agent_id=agent_id_to_use
-    )
+    try:
+        llm, messages, agent_name, agent_id = await get_agent_graph(
+            question=query.query,
+            organization_id=org_id,
+            chat_history=chat_history,
+            agent_id=agent_id_to_use
+        )
+    except Exception:
+        # Safe fallback: return a generic response if agent graph fails
+        async def error_response():
+            yield "[Agent: Unknown | Session: {}]\n\n".format(session_id)
+            yield "Sorry, there was an error processing your request. Please try again later."
+        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
@@ -945,12 +971,18 @@ async def regenerate(
     original_query = chat_history[message_num]['user']
     org_id = user.get("organization")
 
-    llm, messages, agent_name, agent_id_str = await get_agent_graph(
-        question=original_query,
-        organization_id=org_id,
-        chat_history=truncated_history,
-        agent_id=agent_id
-    )
+    try:
+        llm, messages, agent_name, agent_id_str = await get_agent_graph(
+            question=original_query,
+            organization_id=org_id,
+            chat_history=truncated_history,
+            agent_id=agent_id
+        )
+    except Exception:
+        async def error_response():
+            yield "[Agent: Unknown | Session: {}]\n\n".format(session_id)
+            yield "Sorry, there was an error processing your request. Please try again later."
+        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
@@ -999,12 +1031,18 @@ async def edit_message(
     history_for_llm = chat_history[:message_num]
     org_id = user.get("organization")
 
-    llm, messages, agent_name, agent_id_str = await get_agent_graph(
-        question=query,
-        organization_id=org_id,
-        chat_history=history_for_llm,
-        agent_id=agent_id
-    )
+    try:
+        llm, messages, agent_name, agent_id_str = await get_agent_graph(
+            question=query,
+            organization_id=org_id,
+            chat_history=history_for_llm,
+            agent_id=agent_id
+        )
+    except Exception:
+        async def error_response():
+            yield "[Agent: Unknown | Session: {}]\n\n".format(session_id)
+            yield "Sorry, there was an error processing your request. Please try again later."
+        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
@@ -1142,8 +1180,9 @@ def create_agent(agent: AgentCreate, token: str = Depends(oauth2_scheme)):
     agent_data = agent.model_dump(by_alias=True, exclude={"id"}) 
     
     agent_data["org"] = org_id
-    agent_data["created_at"] = datetime.datetime.utcnow().isoformat()
-    agent_data["updated_at"] = agent_data["created_at"]
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    agent_data["created_at"] = now
+    agent_data["updated_at"] = now
 
     result = agents_db.insert_one(agent_data)
     
@@ -1199,7 +1238,7 @@ def update_agent(agent_id: str, agent_update: AgentUpdate, token: str = Depends(
     if not update_data:
         raise HTTPException(status_code=400, detail="No valid update data provided.")
 
-    update_data["updated_at"] = datetime.datetime.utcnow().isoformat()
+    update_data["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     agents_db.update_one(
         {"_id": ObjectId(agent_id)},
@@ -1421,7 +1460,7 @@ def add_connector_to_agent(agent_id: str, connector_id: str, token: str = Depend
 
     update_result = agents_db.update_one(
         {"_id": ObjectId(agent_id)},
-        {"$addToSet": {"connector_ids": ObjectId(connector_id)}, "$set": {"updated_at": datetime.datetime.utcnow().isoformat()}}
+        {"$addToSet": {"connector_ids": ObjectId(connector_id)}, "$set": {"updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}}
     )
 
     if update_result.matched_count == 0:
@@ -1450,7 +1489,7 @@ def delete_connector_from_agent(agent_id: str, connector_id: str, token: str = D
     
     update_result = agents_db.update_one(
         {"_id": ObjectId(agent_id)},
-        {"$pull": {"connector_ids": ObjectId(connector_id)}, "$set": {"updated_at": datetime.datetime.utcnow().isoformat()}}
+        {"$pull": {"connector_ids": ObjectId(connector_id)}, "$set": {"updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}}
     )
 
     if update_result.matched_count == 0:
