@@ -73,17 +73,13 @@ import secrets
 import datetime
 
 def hash_password(password: str) -> str:
-    password_bytes = password.encode("utf-8")
-    if len(password_bytes) > 72:
-        password_bytes = password_bytes[:72]
-    return pwd_context.hash(password_bytes)
+    pw_bytes = password.encode("utf-8")[:72]
+    return pwd_context.hash(pw_bytes)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    password_bytes = plain_password.encode("utf-8")
-    if len(password_bytes) > 72:
-        password_bytes = password_bytes[:72]
+    pw_bytes = plain_password.encode("utf-8")[:72]
     try:
-        return pwd_context.verify(password_bytes, hashed_password)
+        return pwd_context.verify(pw_bytes, hashed_password)
     except Exception:
         return False
 
@@ -1063,7 +1059,7 @@ async def edit_message(
     return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
 # --- Session Management Routes ---
-from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
 
 @app.get("/sessions", response_model=List[dict])
