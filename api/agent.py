@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict
 import os
 import re
 import importlib
+import unidecode
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -21,9 +22,14 @@ Connectors = Literal["google_sheet", "google_drive", "source_pdf", "source_uri"]
 
 Models = Literal["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-5"]
 
-def _clean_tool_name(name: str, prefix: str) -> str:
-    s = re.sub(r'\W+', '_', name)
-    return f"{prefix}_{s}".lower()
+def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
+    name_ascii = unidecode.unidecode(name)
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', name_ascii)
+    sanitized = re.sub(r'_+', '_', sanitized)
+    sanitized = sanitized.strip('_')
+    tool_name = f"{prefix}_{sanitized}".lower()
+    llm_label = name.strip()
+    return {"tool_name": tool_name, "llm_label": llm_label}
 
 class PyObjectId(ObjectId):
     @classmethod
@@ -185,8 +191,10 @@ async def get_agent_graph(
                     continue
                 module_path, func_name = tool_factory_path.rsplit(".", 1)
                 tool_factory = getattr(importlib.import_module(module_path), func_name)
-                tool_name = _clean_tool_name(connector["name"], connector_type)
-                active_tools.append(tool_factory(settings=connector["settings"], name=tool_name))
+                names = _clean_tool_name(connector["name"], connector_type)
+                tool_name = names["tool_name"]
+                llm_label = names["llm_label"]
+                active_tools.append(tool_factory(settings=connector["settings"], name=tool_name, llm_label=llm_label))
 
         system_prompt = selected_agent["description"]
         final_agent_id = selected_agent["_id"]
@@ -207,6 +215,7 @@ async def get_agent_graph(
     messages_list.append(HumanMessage(content=question))
 
     messages_dict = convert_messages_to_dict(messages_list)
+
 
     return {
         "graph": graph,
