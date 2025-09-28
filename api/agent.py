@@ -224,7 +224,7 @@ async def get_agent_graph(
             streaming=True,
             max_retries=3
         )
-        graph = create_react_agent(agent_llm, active_tools, pre_model_hook=pre_model_hook, system_message=system_prompt)
+        graph = create_react_agent(agent_llm, active_tools)
     else:
         system_prompt = "You are a helpful general-purpose assistant."
         final_agent_id = None
@@ -235,7 +235,7 @@ async def get_agent_graph(
             streaming=True,
             max_retries=3
         )
-        graph = create_react_agent(agent_llm, [], pre_model_hook=pre_model_hook, system_message=system_prompt)
+        graph = create_react_agent(agent_llm, [])
 
     messages = [SystemMessage(content=system_prompt)]
     for entry in chat_history:

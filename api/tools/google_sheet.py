@@ -14,6 +14,16 @@ class GoogleSheetInput(BaseModel):
 def get_google_sheet_tool(settings: Dict[str, Any], name: str):
     @tool
     def google_sheet_tool(spreadsheet_id: str, range_name: str) -> str:
+        """
+        Reads data from a specified Google Sheet and range using the provided service account credentials.
+        
+        Args:
+            spreadsheet_id (str): The unique ID of the Google Sheet to read from.
+            range_name (str): The range of cells to read in A1 notation (e.g., 'Sheet1!A1:B10').
+
+        Returns:
+            str: The data read from the Google Sheet as a comma-separated string, or an error message.
+        """
         try:
             creds_info = settings
             if not creds_info:

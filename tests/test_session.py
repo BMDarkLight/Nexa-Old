@@ -74,36 +74,29 @@ def strip_metadata(text: str) -> str:
 # --- Test Cases ---
 
 # The patch target is updated to the new async function
-@patch('api.main.get_agent_components')
-def test_ask_creates_new_session_with_stream(mock_get_agent_components, authenticated_user_token):
-    """
-    Tests that calling /ask without a session_id creates a new session
-    and returns a streaming response.
-    """
+@patch('api.main.get_agent_graph')
+def test_ask_creates_new_session_with_stream(mock_get_agent_graph, authenticated_user_token):
     mocked_response_text = "This is a streamed response."
-    mock_llm = create_mock_llm_stream(mocked_response_text)
-    
-    # Setup: Mock the new function's return value (a tuple of components)
-    mock_get_agent_components.return_value = (
-        mock_llm, [], "MockAgent", "mock-agent-id"
-    )
-    
+
+    class MockGraph:
+        async def run(self, question):
+            return mocked_response_text
+
+    mock_graph = MockGraph()
+    mock_get_agent_graph.return_value = asyncio.Future()
+    mock_get_agent_graph.return_value.set_result((mock_graph, [], "MockAgent", "mock-agent-id"))
+
     token, user_id = authenticated_user_token
     query_payload = {"query": "Hello, world!"}
-    
-    # Action: Use a context manager to ensure background tasks are executed
+
     with TestClient(app) as client:
         resp = client.post("/ask", headers=auth_header(token), json=query_payload)
-    
-    # Assertions for the streaming response
-    assert resp.status_code == 200
-    # The response body includes metadata in the first line
-    stripped_text = strip_metadata(resp.text)
-    assert stripped_text == mocked_response_text 
-    # Check for metadata in headers
-    # assert resp.headers["x-agent-name"] == "MockAgent"  # Removed as per instructions
 
-    # Verify a new session was created in the background
+    assert resp.status_code == 200
+    stripped_text = strip_metadata(resp.text)
+    assert stripped_text == mocked_response_text
+
+    # Verify session creation
     assert sessions_db.count_documents({}) == 1
     session = sessions_db.find_one()
     assert session["user_id"] == user_id
@@ -111,17 +104,11 @@ def test_ask_creates_new_session_with_stream(mock_get_agent_components, authenti
     assert session["chat_history"][0]["user"] == "Hello, world!"
     assert session["chat_history"][0]["assistant"] == mocked_response_text
 
-
-@patch('api.main.get_agent_components')
-def test_ask_updates_existing_session_with_stream(mock_get_agent_components, authenticated_user_token):
-    """
-    Tests that calling /ask with an existing session_id correctly appends
-    to the chat history after streaming.
-    """
+@patch('api.main.get_agent_graph')
+def test_ask_updates_existing_session_with_stream(mock_get_agent_graph, authenticated_user_token):
     token, user_id = authenticated_user_token
     session_id = "test-session-123"
-    
-    # Setup 1: Manually create an existing session for the user
+
     initial_history = [{"user": "First question", "assistant": "First answer"}]
     sessions_db.insert_one({
         "session_id": session_id,
@@ -129,29 +116,28 @@ def test_ask_updates_existing_session_with_stream(mock_get_agent_components, aut
         "chat_history": initial_history
     })
 
-    # Setup 2: Mock the agent components and stream
     mocked_response_text = "This is the second response."
-    mock_llm = create_mock_llm_stream(mocked_response_text)
-    mock_get_agent_components.return_value = (
-        mock_llm, [], "MockAgent", "mock-agent-id"
-    )
-    
+
+    class MockGraph:
+        async def run(self, question):
+            return mocked_response_text
+
+    mock_graph = MockGraph()
+    mock_get_agent_graph.return_value = asyncio.Future()
+    mock_get_agent_graph.return_value.set_result((mock_graph, [], "MockAgent", "mock-agent-id"))
+
     query_payload = {"query": "Second question", "session_id": session_id}
-    
-    # Action: Call the endpoint within a context manager
+
     with TestClient(app) as client:
         resp = client.post("/ask", headers=auth_header(token), json=query_payload)
-    
-    # Assertions
+
     assert resp.status_code == 200
     stripped_text = strip_metadata(resp.text)
     assert stripped_text == mocked_response_text
-    
-    # assert resp.headers["x-agent-name"] == "MockAgent"  # Removed as per instructions
-    
+
     updated_session = sessions_db.find_one({"session_id": session_id})
     assert sessions_db.count_documents({}) == 1
-    assert len(updated_session["chat_history"]) == 2 
+    assert len(updated_session["chat_history"]) == 2
     assert updated_session["chat_history"][0] == initial_history[0]
     assert updated_session["chat_history"][1]["user"] == "Second question"
     assert updated_session["chat_history"][1]["assistant"] == mocked_response_text

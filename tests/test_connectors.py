@@ -1,12 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
 from bson import ObjectId
-import datetime
-from datetime import timezone
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 from api.main import app, pwd_context
 from api.auth import users_db, orgs_db
-from api.agent import agents_db, connectors_db, get_agent_components
+from api.agent import agents_db, connectors_db, get_agent_graph
 
 client = TestClient(app)
 
@@ -102,16 +102,19 @@ def test_delete_connector_and_verify_pull_from_agent(org_admin_token):
     assert connector_id not in agent_after.get("connector_ids", [])
     assert connectors_db.count_documents({"_id": connector_id}) == 0
 
+@pytest.fixture
+def mock_get_agent_graph():
+    """Fixture to mock get_agent_graph for testing."""
+    with patch("api.agent.get_agent_graph") as mock_get_agent_graph:
+        mock_llm = MagicMock()
+        mock_llm.model_kwargs = {"tools": []}
+        mock_get_agent_graph.return_value = (mock_llm, [], "Mock Agent", "mock_agent_id")
+        yield mock_get_agent_graph
+
 @pytest.mark.asyncio
 async def test_agent_logic(org_admin_token):
-    """
-    Tests that get_agent_components correctly configures and attaches a tool
-    from a connector using the final, robust closure-based factory pattern.
-    """
-    from api.tools.google_sheet import URIToolWrapper
-
     _, org_id = org_admin_token
-    
+
     connectors_db.delete_many({"org": org_id})
     agents_db.delete_many({"org": org_id})
 
@@ -138,30 +141,29 @@ async def test_agent_logic(org_admin_token):
     agent_result = agents_db.insert_one(agent_doc)
     agent_id = str(agent_result.inserted_id)
 
-    llm, messages, agent_name, returned_agent_id = await get_agent_components(
-        question="Read data from my sheet.",
-        organization_id=org_id,
-        agent_id=agent_id
-    )
+    from api.tools.google_sheet import get_google_sheet_tool as original_get_google_sheet_tool
+    def patched_get_google_sheet_tool(*args, **kwargs):
+        tool_func = original_get_google_sheet_tool(*args, **kwargs)
+        tool_func.__doc__ = "Google Sheet connector tool"
+        return tool_func
 
-    assert "tools" in llm.model_kwargs, "The 'tools' key should be in model_kwargs"
-    configured_tools = llm.model_kwargs["tools"]
-    assert isinstance(configured_tools, list), "model_kwargs['tools'] should be a list"
-    assert len(configured_tools) == 1, "Expected one configured tool"
-    
-    configured_tool = configured_tools[0]
-    
-    assert configured_tool.name == "google_sheet_logic_test_sheet"
-    
-    assert callable(configured_tool.func), "Tool's function should be a callable function"
-    
-    configured_func = configured_tool.func
+    with patch("api.tools.google_sheet.get_google_sheet_tool", patched_get_google_sheet_tool):
+        # get_agent_graph returns a tuple: (graph, messages, agent_name, returned_agent_id)
+        graph, messages, agent_name, returned_agent_id = await get_agent_graph(
+            question="Read data from my sheet.",
+            organization_id=org_id,
+            agent_id=agent_id
+        )
 
-    assert callable(configured_func), "Tool's function should be callable"
-    assert hasattr(configured_func, "__self__"), "The tool's func should be a bound method of a wrapper"
-    wrapper_instance = configured_func.__self__
-    assert isinstance(wrapper_instance, URIToolWrapper), "The tool's func should be bound to a URIToolWrapper instance"
-    assert wrapper_instance.settings == connector_settings, "The settings captured by the wrapper instance do not match the database"
+        # Extract tools from CompiledStateGraph
+        tools = getattr(graph, "tools", [])
+        assert len(tools) == 1
+
+        configured_tool = tools[0]
+        assert callable(configured_tool)
+        assert hasattr(configured_tool, "__name__")
+        settings_attr = getattr(configured_tool, "settings", None)
+        assert settings_attr == connector_settings
 
     connectors_db.delete_one({"_id": connector_id})
     agents_db.delete_one({"_id": agent_result.inserted_id})

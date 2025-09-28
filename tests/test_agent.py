@@ -57,27 +57,24 @@ def test_user_token(test_user):
     return resp.json()["access_token"]
 
 @pytest.fixture(autouse=True)
-def mock_llm_call(monkeypatch):
+def mock_agent_graph(monkeypatch):
     """
-    Mocks the get_agent_components function to prevent real LLM calls.
-    This fixture now correctly simulates an async stream.
+    Mocks the get_agent_graph function to prevent real LLM calls.
+    This fixture simulates async streaming from LangGraph-based agent.
     """
-    async def mock_get_agent_components(*args, **kwargs):
-        # Use a standard MagicMock for the llm object
+    async def mock_get_agent_graph(*args, **kwargs):
+        # Simulate LangGraph's return: (llm, messages, agent_name, agent_id)
         mock_llm = MagicMock()
-
         # This is an async generator that yields mock chunks
         async def async_iterator():
             yield MagicMock(content="Mocked ")
             yield MagicMock(content="Response")
-
-        # Set the 'astream' method's return_value to be the async iterator
         mock_llm.astream.return_value = async_iterator()
-        
+        # The messages list can be empty for these tests
         return mock_llm, [], "Mocked Agent", str(ObjectId())
 
-    # Use monkeypatch to replace the function where it's used in the app's code.
-    monkeypatch.setattr("api.main.get_agent_components", mock_get_agent_components)
+    # Patch the get_agent_graph function where it is used in the app's code.
+    monkeypatch.setattr("api.main.get_agent_graph", mock_get_agent_graph)
 
 
 def auth_header(token):
