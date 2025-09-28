@@ -6,6 +6,22 @@ from langchain.tools import tool
 def get_uri_source_tool(settings: Dict[str, Any], name: str):
     @tool
     def uri_search(query: str) -> str:
+        """
+        Searches the content of a given URI for text relevant to the provided query.
+
+        This tool:
+        - Fetches the content at the specified URL from the connector settings.
+        - Extracts the textual content using HTML parsing.
+        - Checks if the query appears in the text.
+        - Returns the relevant content or an appropriate error message if fetching or parsing fails.
+
+        Args:
+            query (str): The question or keyword to search for in the URI's content.
+
+        Returns:
+            str: A message containing the relevant text found at the URI, or an error message
+            if the URL is missing, the content is empty, or no match is found.
+        """
         url = settings.get("url")
         if not url:
             return "Error: Connector is misconfigured. A 'url' is missing from its settings."

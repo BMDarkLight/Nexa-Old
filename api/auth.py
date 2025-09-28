@@ -1,12 +1,14 @@
 import string
 import secrets
+import hashlib
+import os
+
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pymongo import MongoClient
-import os
 from passlib.context import CryptContext
 
 def generate_random_string(length: int = 32) -> str:
@@ -44,7 +46,11 @@ def verify_token(token: str):
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str) -> str:
+    if len(password.encode('utf-8')) > 72:
+        password = hashlib.sha256(password.encode('utf-8')).hexdigest()
     return pwd_context.hash(password)
 
 def verify_password(password: str, hashed: str) -> bool:
+    if len(password.encode('utf-8')) > 72:
+        password = hashlib.sha256(password.encode('utf-8')).hexdigest()
     return pwd_context.verify(password, hashed)

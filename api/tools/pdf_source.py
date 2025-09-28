@@ -30,6 +30,23 @@ def get_pdf_source_tool(settings: Dict[str, Any], name: str):
 
     @tool
     def pdf_source(query: str) -> str:
+        """
+        Searches a PDF document stored in the knowledge database for content relevant to the given query.
+
+        This tool:
+        - Retrieves the document by its `document_id` from the connector settings.
+        - Computes the embedding of the user's query.
+        - Compares the query embedding to the embeddings of the document's text chunks.
+        - Returns the top-K most relevant chunks whose similarity score exceeds the threshold.
+
+        Args:
+            query (str): The question or topic to search for within the PDF document.
+
+        Returns:
+            str: A message containing the most relevant text chunks from the PDF, or an error message
+            if the document is missing, misconfigured, or no relevant information is found.
+        """
+        
         if not knowledge_db:
             return "Error: Database connection for the knowledge base is not available."
 
