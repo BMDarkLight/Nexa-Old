@@ -897,29 +897,23 @@ async def ask(
     background_tasks: BackgroundTasks,
     token: str = Depends(oauth2_scheme)
 ):
-    # 1. Verify token
     try:
         user = verify_token(token)
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
-    # 2. Check query not empty
     if not query.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-    # 3. Check organization or sysadmin
     if not user.get("organization") and user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="You do not belong to an organization.")
 
-    # 4. Handle agent_id_to_use
     agent_id_to_use = None
     if query.agent_id:
-        # Validate ObjectId
         if not ObjectId.is_valid(query.agent_id):
             raise HTTPException(status_code=400, detail="Invalid agent ID format.")
         agent_oid = ObjectId(query.agent_id)
         agent_query = {"_id": agent_oid}
-        # Only sysadmin can access any agent; others only their org
         if user.get("permission") != "sysadmin":
             agent_query["org"] = ObjectId(user["organization"])
         agent_doc = agents_db.find_one(agent_query)
@@ -927,7 +921,6 @@ async def ask(
             raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
         agent_id_to_use = str(agent_oid)
 
-    # 5. Generate/reuse session_id and check session ownership
     import uuid
     session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})

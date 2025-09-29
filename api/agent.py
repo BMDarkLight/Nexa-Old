@@ -13,6 +13,7 @@ import os
 import re
 import importlib
 import unidecode
+import logging
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -187,16 +188,21 @@ async def get_agent_graph(
         if connector_ids:
             agent_connectors = list(connectors_db.find({"_id": {"$in": connector_ids}}))
             for connector in agent_connectors:
-                connector_type = connector.get("connector_type")
-                tool_factory_path = connector_tool_factory_map.get(connector_type)
-                if not tool_factory_path:
-                    continue
-                module_path, func_name = tool_factory_path.rsplit(".", 1)
-                tool_factory = getattr(importlib.import_module(module_path), func_name)
-                names = _clean_tool_name(connector["name"], connector_type)
-                tool_name = names["tool_name"]
-                llm_label = names["llm_label"]
-                active_tools.append(tool_factory(settings=connector["settings"], name=tool_name, llm_label=llm_label))
+                try:
+                    connector_type = connector.get("connector_type")
+                    tool_factory_path = connector_tool_factory_map.get(connector_type)
+                    if not tool_factory_path:
+                        logging.warning(f"No tool factory defined for connector type: {connector_type}")
+                        continue
+                    module_path, func_name = tool_factory_path.rsplit(".", 1)
+                    tool_factory = getattr(importlib.import_module(module_path), func_name)
+                    names = _clean_tool_name(connector["name"], connector_type)
+                    tool_name = names["tool_name"]
+                    llm_label = names["llm_label"]
+                    active_tools.append(tool_factory(settings=connector["settings"], name=tool_name, llm_label=llm_label))
+                    logging.info(f"Loaded connector tool: {tool_name}")
+                except Exception as e:
+                    logging.error(f"Failed to create tool for connector {connector.get('name')}: {e}")
 
         system_prompt = selected_agent["description"]
         final_agent_id = selected_agent["_id"]
