@@ -2,8 +2,6 @@ from langchain_openai import ChatOpenAI
 from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
 from typing import TypedDict, Literal, List, Optional, Dict, Any
 from pymongo import MongoClient
 from bson import ObjectId
@@ -12,8 +10,8 @@ from pydantic import BaseModel, Field, ConfigDict
 import os
 import re
 import importlib
-import unidecode
 import logging
+import unidecode
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -199,7 +197,12 @@ async def get_agent_graph(
                     names = _clean_tool_name(connector["name"], connector_type)
                     tool_name = names["tool_name"]
                     llm_label = names["llm_label"]
-                    active_tools.append(tool_factory(settings=connector["settings"], name=tool_name, llm_label=llm_label))
+
+                    if connector_type in ["source_pdf", "source_uri"]:
+                        active_tools.append(tool_factory(settings=connector["settings"], name=tool_name))
+                    else:
+                        active_tools.append(tool_factory(settings=connector["settings"], name=tool_name, llm_label=llm_label))
+
                     logging.info(f"Loaded connector tool: {tool_name}")
                 except Exception as e:
                     logging.error(f"Failed to create tool for connector {connector.get('name')}: {e}")
