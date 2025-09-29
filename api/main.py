@@ -938,7 +938,6 @@ async def ask(
         )
     except Exception:
         async def error_response():
-            yield f"[Agent: Unknown | Session: {session_id}]\n\n"
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
@@ -947,38 +946,26 @@ async def ask(
     agent_id_str = agent_graph["final_agent_id"]
 
     async def response_generator():
-        from langchain.schema import HumanMessage, AIMessage, SystemMessage
+        from langchain.schema import SystemMessage, HumanMessage, AIMessage
         full_answer = ""
-        if hasattr(graph, "astream") and callable(graph.astream):
-            if graph.__class__.__name__ in ["LLMChain", "ChatOpenAI"]:
-                if graph.__class__.__name__ == "ChatOpenAI":
-                    messages_list = [SystemMessage(content="You are a helpful assistant.")]
-                    for entry in chat_history:
-                        messages_list.append(HumanMessage(content=entry["user"]))
-                        messages_list.append(AIMessage(content=entry["assistant"]))
-                    messages_list.append(HumanMessage(content=query.query))
-                    async for chunk in graph.astream(messages_list):
-                        content = getattr(chunk, "content", "") or ""
-                        full_answer += content
-                        yield content
-                else:
-                    async for chunk in graph.astream({"question": query.query}):
-                        content = chunk.get("content", "")
-                        full_answer += content
-                        yield content
-            else:
-                astream_messages = []
-                for msg in agent_graph.get("messages", []):
-                    if msg["role"] == "user":
-                        astream_messages.append(HumanMessage(content=msg["content"]))
-                    elif msg["role"] == "assistant":
-                        astream_messages.append(AIMessage(content=msg["content"]))
-                    elif msg["role"] == "system":
-                        astream_messages.append(SystemMessage(content=msg["content"]))
-                async for chunk in graph.astream({"messages": astream_messages}):
-                    content = chunk.get("content", "")
-                    full_answer += content
-                    yield content
+        messages = []
+        messages.append(SystemMessage(
+            content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+        ))
+        for entry in chat_history:
+            messages.append(HumanMessage(content=entry["user"]))
+            messages.append(AIMessage(content=entry["assistant"]))
+        messages.append(HumanMessage(content=query.query))
+
+        async for chunk in graph.astream(messages):
+            content = getattr(chunk, "content", None)
+            if content is None and isinstance(chunk, dict):
+                content = chunk.get("content", str(chunk))
+            elif content is None:
+                content = str(chunk)
+            full_answer += content
+            yield content
+
         background_tasks.add_task(
             save_chat_history,
             session_id=session_id,
@@ -1026,7 +1013,7 @@ async def regenerate(
         )
     except Exception:
         async def error_response():
-            yield f"[Agent: Unknown | Session: {session_id}]\n\nSorry, there was an error processing your request. Please try again later."
+            yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph["graph"]
@@ -1034,39 +1021,25 @@ async def regenerate(
     agent_id_str = agent_graph["final_agent_id"]
 
     async def response_generator():
-        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-        from langchain.schema import HumanMessage, AIMessage, SystemMessage
         full_answer = ""
-        if hasattr(graph, "astream") and callable(graph.astream):
-            if graph.__class__.__name__ in ["LLMChain", "ChatOpenAI"]:
-                if graph.__class__.__name__ == "ChatOpenAI":
-                    messages_list = [SystemMessage(content="You are a helpful assistant.")]
-                    for entry in truncated_history:
-                        messages_list.append(HumanMessage(content=entry["user"]))
-                        messages_list.append(AIMessage(content=entry["assistant"]))
-                    messages_list.append(HumanMessage(content=original_query))
-                    async for chunk in graph.astream(messages_list):
-                        content = getattr(chunk, "content", "") or ""
-                        full_answer += content
-                        yield content
-                else:
-                    async for chunk in graph.astream({"question": original_query}):
-                        content = chunk.get("content", "")
-                        full_answer += content
-                        yield content
-            else:
-                astream_messages = []
-                for msg in agent_graph.get("messages", []):
-                    if msg["role"] == "user":
-                        astream_messages.append(HumanMessage(content=msg["content"]))
-                    elif msg["role"] == "assistant":
-                        astream_messages.append(AIMessage(content=msg["content"]))
-                    elif msg["role"] == "system":
-                        astream_messages.append(SystemMessage(content=msg["content"]))
-                async for chunk in graph.astream({"messages": astream_messages}):
-                    content = chunk.get("content", "")
-                    full_answer += content
-                    yield content
+        astream_input = {"messages": []}
+        astream_input["messages"].append({
+            "role": "system",
+            "content": f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+        })
+        for entry in truncated_history:
+            astream_input["messages"].append({"role": "user", "content": entry["user"]})
+            astream_input["messages"].append({"role": "assistant", "content": entry["assistant"]})
+        astream_input["messages"].append({"role": "user", "content": original_query})
+        async for chunk in graph.astream(astream_input):
+            content = getattr(chunk, "content", None)
+            if content is None and isinstance(chunk, dict):
+                content = chunk.get("content", str(chunk))
+            elif content is None:
+                content = str(chunk)
+            full_answer += content
+            yield content
+
         background_tasks.add_task(
             replace_chat_history_from_point,
             session_id=session_id,
@@ -1117,7 +1090,7 @@ async def edit_message(
         )
     except Exception:
         async def error_response():
-            yield f"[Agent: Unknown | Session: {session_id}]\n\nSorry, there was an error processing your request. Please try again later."
+            yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph["graph"]
@@ -1125,39 +1098,25 @@ async def edit_message(
     agent_id_str = agent_graph["final_agent_id"]
 
     async def response_generator():
-        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-        from langchain.schema import HumanMessage, AIMessage, SystemMessage
         full_answer = ""
-        if hasattr(graph, "astream") and callable(graph.astream):
-            if graph.__class__.__name__ in ["LLMChain", "ChatOpenAI"]:
-                if graph.__class__.__name__ == "ChatOpenAI":
-                    messages_list = [SystemMessage(content="You are a helpful assistant.")]
-                    for entry in truncated_history:
-                        messages_list.append(HumanMessage(content=entry["user"]))
-                        messages_list.append(AIMessage(content=entry["assistant"]))
-                    messages_list.append(HumanMessage(content=query))
-                    async for chunk in graph.astream(messages_list):
-                        content = getattr(chunk, "content", "") or ""
-                        full_answer += content
-                        yield content
-                else:
-                    async for chunk in graph.astream({"question": query}):
-                        content = chunk.get("content", "")
-                        full_answer += content
-                        yield content
-            else:
-                astream_messages = []
-                for msg in agent_graph.get("messages", []):
-                    if msg["role"] == "user":
-                        astream_messages.append(HumanMessage(content=msg["content"]))
-                    elif msg["role"] == "assistant":
-                        astream_messages.append(AIMessage(content=msg["content"]))
-                    elif msg["role"] == "system":
-                        astream_messages.append(SystemMessage(content=msg["content"]))
-                async for chunk in graph.astream({"messages": astream_messages}):
-                    content = chunk.get("content", "")
-                    full_answer += content
-                    yield content
+        astream_input = {"messages": []}
+        astream_input["messages"].append({
+            "role": "system",
+            "content": f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+        })
+        for entry in truncated_history:
+            astream_input["messages"].append({"role": "user", "content": entry["user"]})
+            astream_input["messages"].append({"role": "assistant", "content": entry["assistant"]})
+        astream_input["messages"].append({"role": "user", "content": query})
+        async for chunk in graph.astream(astream_input):
+            content = getattr(chunk, "content", None)
+            if content is None and isinstance(chunk, dict):
+                content = chunk.get("content", str(chunk))
+            elif content is None:
+                content = str(chunk)
+            full_answer += content
+            yield content
+
         background_tasks.add_task(
             update_chat_history_entry,
             session_id=session_id,

@@ -221,20 +221,41 @@ async def get_agent_graph(
                         return output
                     tool.run = logging_run
 
-        system_prompt = selected_agent["description"]
+        system_prompt = f"""
+            You are an AI agent built by user in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.
+            You are now operating as the agent named **{selected_agent['name']}**.
+            Here's the description user provided for the said agent : {selected_agent.get("description") or "No description provided."}\n
+            You also have access to the following tools: {', '.join([getattr(t, 'llm_label', getattr(t, 'name', 'unknown')) for t in active_tools])}.
+        """
+
+        messages_list = [SystemMessage(content=system_prompt)]
+        for entry in chat_history:
+            user_text = entry.get("user", "").strip()
+            assistant_text = entry.get("assistant", "").strip()
+            if user_text:
+                messages_list.append(HumanMessage(content=user_text))
+            if assistant_text:
+                messages_list.append(AIMessage(content=assistant_text))
+        messages_list.append(HumanMessage(content=question))
+
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
         agent_llm = ChatOpenAI(model=selected_agent["model"], temperature=selected_agent.get("temperature", 0.7), streaming=True, max_retries=3)
         graph = create_react_agent(agent_llm, active_tools)
     else:
-        system_prompt = "You are a helpful general-purpose assistant."
-        final_agent_id = None
-        final_agent_name = "Generalist"
+        system_prompt = """
+            You are an AI agent called Generalist in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.
+            You do not have access to any specialized tools or connectors. You are a general-purpose fallback assistant that can help with a wide range of topics.
+        """
 
         messages_list = [SystemMessage(content=system_prompt)]
         for entry in chat_history:
-            messages_list.append(HumanMessage(content=entry["user"]))
-            messages_list.append(AIMessage(content=entry["assistant"]))
+            user_text = entry.get("user", "").strip()
+            assistant_text = entry.get("assistant", "").strip()
+            if user_text:
+                messages_list.append(HumanMessage(content=user_text))
+            if assistant_text:
+                messages_list.append(AIMessage(content=assistant_text))
         messages_list.append(HumanMessage(content=question))
 
         logging.info(f"Messages going into agent: {[m.content for m in messages_list]}")
@@ -247,15 +268,9 @@ async def get_agent_graph(
         return {
             "graph": graph,
             "messages": messages_dict,
-            "final_agent_name": final_agent_name,
+            "final_agent_name": "Generalist",
             "final_agent_id": None,
         }
-
-    messages_list = [SystemMessage(content=system_prompt)]
-    for entry in chat_history:
-        messages_list.append(HumanMessage(content=entry["user"]))
-        messages_list.append(AIMessage(content=entry["assistant"]))
-    messages_list.append(HumanMessage(content=question))
 
     logging.info(f"Messages going into agent: {[m.content for m in messages_list]}")
 
