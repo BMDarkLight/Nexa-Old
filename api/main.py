@@ -847,6 +847,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from bson import ObjectId
 from api.auth import verify_token, oauth2_scheme
+import json
 
 class QueryRequest(BaseModel):
     query: str
@@ -939,33 +940,54 @@ async def ask(
     except Exception:
         async def error_response():
             yield "Sorry, there was an error processing your request. Please try again later."
-        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
+        return StreamingResponse(error_response(), media_type="text/plain")
 
     graph = agent_graph["graph"]
     agent_name = agent_graph["final_agent_name"]
     agent_id_str = agent_graph["final_agent_id"]
 
     async def response_generator():
-        from langchain.schema import SystemMessage, HumanMessage, AIMessage
-        full_answer = ""
-        messages = []
-        messages.append(SystemMessage(
-            content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-        ))
-        for entry in chat_history:
-            messages.append(HumanMessage(content=entry["user"]))
-            messages.append(AIMessage(content=entry["assistant"]))
-        messages.append(HumanMessage(content=query.query))
+        # Header for front-end
+        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
 
-        async for chunk in graph.astream(messages):
-            content = getattr(chunk, "content", None)
-            if content is None and isinstance(chunk, dict):
-                content = chunk.get("content", str(chunk))
-            elif content is None:
+        full_answer = ""
+        astream_input = {"messages": []}
+        astream_input["messages"].append({
+            "role": "system",
+            "content": f"You are an AI agent built by user in Nexa AI platform. "
+                       f"You are now operating as the agent named {agent_name}. "
+                       f"Description: {agent_graph.get('description', 'No description provided')}."
+        })
+        for entry in chat_history:
+            astream_input["messages"].append({"role": "user", "content": entry["user"]})
+            astream_input["messages"].append({"role": "assistant", "content": entry["assistant"]})
+        astream_input["messages"].append({"role": "user", "content": query.query})
+
+        async for chunk in graph.astream(astream_input):
+            content = ""
+
+            # Case 1: AIMessage object
+            if hasattr(chunk, "content"):
+                content = chunk.content or ""
+
+            # Case 2: LangGraph agent dict
+            elif isinstance(chunk, dict):
+                try:
+                    agent_messages = chunk.get("agent", {}).get("messages", [])
+                    if agent_messages:
+                        last_msg = agent_messages[-1]
+                        content = getattr(last_msg, "content", str(last_msg))
+                except Exception:
+                    content = str(chunk)
+
+            # Fallback
+            else:
                 content = str(chunk)
+
             full_answer += content
             yield content
 
+        # Save to DB
         background_tasks.add_task(
             save_chat_history,
             session_id=session_id,
@@ -1014,13 +1036,16 @@ async def regenerate(
     except Exception:
         async def error_response():
             yield "Sorry, there was an error processing your request. Please try again later."
-        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
+        return StreamingResponse(error_response(), media_type="text/plain")
 
     graph = agent_graph["graph"]
     agent_name = agent_graph["final_agent_name"]
     agent_id_str = agent_graph["final_agent_id"]
 
     async def response_generator():
+        # Yield initial header for front-end
+        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+
         full_answer = ""
         astream_input = {"messages": []}
         astream_input["messages"].append({
@@ -1034,7 +1059,7 @@ async def regenerate(
         async for chunk in graph.astream(astream_input):
             content = getattr(chunk, "content", None)
             if content is None and isinstance(chunk, dict):
-                content = chunk.get("content", str(chunk))
+                content = chunk.get("content", "")
             elif content is None:
                 content = str(chunk)
             full_answer += content
@@ -1051,7 +1076,7 @@ async def regenerate(
             agent_name=agent_name
         )
 
-    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
+    return StreamingResponse(response_generator(), media_type="text/plain")
 
 @app.post("/ask/edit/{message_num}")
 async def edit_message(
@@ -1091,13 +1116,15 @@ async def edit_message(
     except Exception:
         async def error_response():
             yield "Sorry, there was an error processing your request. Please try again later."
-        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
+        return StreamingResponse(error_response(), media_type="text/plain")
 
     graph = agent_graph["graph"]
     agent_name = agent_graph["final_agent_name"]
     agent_id_str = agent_graph["final_agent_id"]
 
     async def response_generator():
+        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+
         full_answer = ""
         astream_input = {"messages": []}
         astream_input["messages"].append({
@@ -1111,7 +1138,7 @@ async def edit_message(
         async for chunk in graph.astream(astream_input):
             content = getattr(chunk, "content", None)
             if content is None and isinstance(chunk, dict):
-                content = chunk.get("content", str(chunk))
+                content = chunk.get("content", "")
             elif content is None:
                 content = str(chunk)
             full_answer += content
@@ -1125,7 +1152,7 @@ async def edit_message(
             new_answer=full_answer
         )
 
-    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
+    return StreamingResponse(response_generator(), media_type="text/plain")
 
 # --- Session Management Routes ---
 from langchain_openai import ChatOpenAI
