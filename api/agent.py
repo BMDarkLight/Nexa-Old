@@ -207,6 +207,20 @@ async def get_agent_graph(
                 except Exception as e:
                     logging.error(f"Failed to create tool for connector {connector.get('name')}: {e}")
 
+        logging.info(f"Active tools for agent '{selected_agent['name'] if selected_agent else 'Generalist'}': "
+                     f"{[(getattr(t, 'name', None), getattr(t, 'llm_label', None)) for t in active_tools]}")
+
+        for tool in active_tools:
+            if hasattr(tool, "run"):
+                original_run = tool.run
+                if callable(original_run):
+                    async def logging_run(input_text, original_run=original_run, tool=tool):
+                        logging.info(f"Tool '{getattr(tool, 'name', 'unknown')}' called with input: {input_text}")
+                        output = await original_run(input_text)
+                        logging.info(f"Tool '{getattr(tool, 'name', 'unknown')}' output: {output}")
+                        return output
+                    tool.run = logging_run
+
         system_prompt = selected_agent["description"]
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
@@ -222,6 +236,8 @@ async def get_agent_graph(
             messages_list.append(HumanMessage(content=entry["user"]))
             messages_list.append(AIMessage(content=entry["assistant"]))
         messages_list.append(HumanMessage(content=question))
+
+        logging.info(f"Messages going into agent: {[m.content for m in messages_list]}")
 
         agent_llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, temperature=0.7, max_retries=3)
         graph = agent_llm
@@ -240,6 +256,8 @@ async def get_agent_graph(
         messages_list.append(HumanMessage(content=entry["user"]))
         messages_list.append(AIMessage(content=entry["assistant"]))
     messages_list.append(HumanMessage(content=question))
+
+    logging.info(f"Messages going into agent: {[m.content for m in messages_list]}")
 
     messages_dict = convert_messages_to_dict(messages_list)
 
