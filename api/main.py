@@ -897,11 +897,38 @@ async def ask(
     background_tasks: BackgroundTasks,
     token: str = Depends(oauth2_scheme)
 ):
-    user = verify_token(token)
+    # 1. Verify token
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+    # 2. Check query not empty
     if not query.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-    agent_id_to_use = query.agent_id
+    # 3. Check organization or sysadmin
+    if not user.get("organization") and user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="You do not belong to an organization.")
+
+    # 4. Handle agent_id_to_use
+    agent_id_to_use = None
+    if query.agent_id:
+        # Validate ObjectId
+        if not ObjectId.is_valid(query.agent_id):
+            raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+        agent_oid = ObjectId(query.agent_id)
+        agent_query = {"_id": agent_oid}
+        # Only sysadmin can access any agent; others only their org
+        if user.get("permission") != "sysadmin":
+            agent_query["org"] = ObjectId(user["organization"])
+        agent_doc = agents_db.find_one(agent_query)
+        if not agent_doc:
+            raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
+        agent_id_to_use = str(agent_oid)
+
+    # 5. Generate/reuse session_id and check session ownership
+    import uuid
     session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})
     if session and session.get("user_id") != str(user["_id"]):
@@ -923,58 +950,42 @@ async def ask(
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph["graph"]
-    messages = agent_graph["messages"]
     agent_name = agent_graph["final_agent_name"]
-    agent_id = agent_graph["final_agent_id"]
-
-    def map_type_to_role(msg_type):
-        if msg_type is None:
-            return "user"
-        t = msg_type.lower()
-        if t == "system":
-            return "system"
-        elif t == "assistant":
-            return "assistant"
-        elif t == "human":
-            return "user"
-        else:
-            return t
+    agent_id_str = agent_graph["final_agent_id"]
 
     async def response_generator():
-        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+        from langchain.schema import HumanMessage, AIMessage, SystemMessage
         full_answer = ""
-
-        # include chat history in prompt context
-        history_context = ""
-        for entry in chat_history:
-            user_msg = entry.get("user", "")
-            assistant_msg = entry.get("assistant", "")
-            if user_msg:
-                history_context += f"User: {user_msg}\n"
-            if assistant_msg:
-                history_context += f"Assistant: {assistant_msg}\n"
-
-        latest_message = None
-        for msg in messages[::-1]:
-            msg_type = msg.get("type") or msg.get("role")
-            if msg_type and str(msg_type).lower() in ("user", "human"):
-                latest_message = msg
-                break
-        if latest_message is None and messages:
-            latest_message = messages[-1]
-
-        content = (history_context + (latest_message.get("content") if latest_message else query.query)).strip()
-        role = map_type_to_role(latest_message.get("type") if latest_message else "user")
-
-        # ✅ Wrap under 'messages' for Pregel
-        astream_input = {
-            "messages": [{"role": role, "content": content}]
-        }
-
-        async for chunk in graph.astream(astream_input):
-            full_answer += chunk.get("content", "")
-            yield chunk.get("content", "")
-
+        if hasattr(graph, "astream") and callable(graph.astream):
+            if graph.__class__.__name__ in ["LLMChain", "ChatOpenAI"]:
+                if graph.__class__.__name__ == "ChatOpenAI":
+                    messages_list = [SystemMessage(content="You are a helpful assistant.")]
+                    for entry in chat_history:
+                        messages_list.append(HumanMessage(content=entry["user"]))
+                        messages_list.append(AIMessage(content=entry["assistant"]))
+                    messages_list.append(HumanMessage(content=query.query))
+                    async for chunk in graph.astream(messages_list):
+                        content = getattr(chunk, "content", "") or ""
+                        full_answer += content
+                        yield content
+                else:
+                    async for chunk in graph.astream({"question": query.query}):
+                        content = chunk.get("content", "")
+                        full_answer += content
+                        yield content
+            else:
+                astream_messages = []
+                for msg in agent_graph.get("messages", []):
+                    if msg["role"] == "user":
+                        astream_messages.append(HumanMessage(content=msg["content"]))
+                    elif msg["role"] == "assistant":
+                        astream_messages.append(AIMessage(content=msg["content"]))
+                    elif msg["role"] == "system":
+                        astream_messages.append(SystemMessage(content=msg["content"]))
+                async for chunk in graph.astream({"messages": astream_messages}):
+                    content = chunk.get("content", "")
+                    full_answer += content
+                    yield content
         background_tasks.add_task(
             save_chat_history,
             session_id=session_id,
@@ -982,7 +993,7 @@ async def ask(
             chat_history=chat_history,
             query=query.query,
             answer=full_answer,
-            agent_id=agent_id,
+            agent_id=agent_id_str,
             agent_name=agent_name
         )
 
@@ -1026,30 +1037,43 @@ async def regenerate(
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph["graph"]
-    messages = agent_graph["messages"]
     agent_name = agent_graph["final_agent_name"]
     agent_id_str = agent_graph["final_agent_id"]
 
-    def map_type_to_role(msg_type):
-        if msg_type is None:
-            return "user"
-        t = msg_type.lower()
-        return {"system": "system", "assistant": "assistant", "human": "user"}.get(t, t)
-
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+        from langchain.schema import HumanMessage, AIMessage, SystemMessage
         full_answer = ""
-        history_context = "".join(f"User: {e.get('user','')}\nAssistant: {e.get('assistant','')}\n" for e in truncated_history)
-        latest_message = next((m for m in reversed(messages) if (m.get("type") or m.get("role") or "").lower() in ["user","human"]), messages[-1] if messages else None)
-        role = map_type_to_role(latest_message.get("type") if latest_message else "user")
-        content = (history_context + (latest_message.get("content") if latest_message else original_query)).strip()
-        astream_input = {"messages": [{"role": role, "content": content}]}
-
-        async for chunk in graph.astream(astream_input):
-            content = chunk.get("content", "")
-            full_answer += content
-            yield content
-
+        if hasattr(graph, "astream") and callable(graph.astream):
+            if graph.__class__.__name__ in ["LLMChain", "ChatOpenAI"]:
+                if graph.__class__.__name__ == "ChatOpenAI":
+                    messages_list = [SystemMessage(content="You are a helpful assistant.")]
+                    for entry in truncated_history:
+                        messages_list.append(HumanMessage(content=entry["user"]))
+                        messages_list.append(AIMessage(content=entry["assistant"]))
+                    messages_list.append(HumanMessage(content=original_query))
+                    async for chunk in graph.astream(messages_list):
+                        content = getattr(chunk, "content", "") or ""
+                        full_answer += content
+                        yield content
+                else:
+                    async for chunk in graph.astream({"question": original_query}):
+                        content = chunk.get("content", "")
+                        full_answer += content
+                        yield content
+            else:
+                astream_messages = []
+                for msg in agent_graph.get("messages", []):
+                    if msg["role"] == "user":
+                        astream_messages.append(HumanMessage(content=msg["content"]))
+                    elif msg["role"] == "assistant":
+                        astream_messages.append(AIMessage(content=msg["content"]))
+                    elif msg["role"] == "system":
+                        astream_messages.append(SystemMessage(content=msg["content"]))
+                async for chunk in graph.astream({"messages": astream_messages}):
+                    content = chunk.get("content", "")
+                    full_answer += content
+                    yield content
         background_tasks.add_task(
             replace_chat_history_from_point,
             session_id=session_id,
@@ -1104,30 +1128,43 @@ async def edit_message(
         return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph["graph"]
-    messages = agent_graph["messages"]
     agent_name = agent_graph["final_agent_name"]
     agent_id_str = agent_graph["final_agent_id"]
 
-    def map_type_to_role(msg_type):
-        if msg_type is None:
-            return "user"
-        t = msg_type.lower()
-        return {"system": "system", "assistant": "assistant", "human": "user"}.get(t, t)
-
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
+        from langchain.schema import HumanMessage, AIMessage, SystemMessage
         full_answer = ""
-        history_context = "".join(f"User: {e.get('user','')}\nAssistant: {e.get('assistant','')}\n" for e in truncated_history)
-        latest_message = next((m for m in reversed(messages) if (m.get("type") or m.get("role") or "").lower() in ["user","human"]), messages[-1] if messages else None)
-        role = map_type_to_role(latest_message.get("type") if latest_message else "user")
-        content = (history_context + (latest_message.get("content") if latest_message else query)).strip()
-        astream_input = {"messages": [{"role": role, "content": content}]}
-
-        async for chunk in graph.astream(astream_input):
-            content = chunk.get("content", "")
-            full_answer += content
-            yield content
-
+        if hasattr(graph, "astream") and callable(graph.astream):
+            if graph.__class__.__name__ in ["LLMChain", "ChatOpenAI"]:
+                if graph.__class__.__name__ == "ChatOpenAI":
+                    messages_list = [SystemMessage(content="You are a helpful assistant.")]
+                    for entry in truncated_history:
+                        messages_list.append(HumanMessage(content=entry["user"]))
+                        messages_list.append(AIMessage(content=entry["assistant"]))
+                    messages_list.append(HumanMessage(content=query))
+                    async for chunk in graph.astream(messages_list):
+                        content = getattr(chunk, "content", "") or ""
+                        full_answer += content
+                        yield content
+                else:
+                    async for chunk in graph.astream({"question": query}):
+                        content = chunk.get("content", "")
+                        full_answer += content
+                        yield content
+            else:
+                astream_messages = []
+                for msg in agent_graph.get("messages", []):
+                    if msg["role"] == "user":
+                        astream_messages.append(HumanMessage(content=msg["content"]))
+                    elif msg["role"] == "assistant":
+                        astream_messages.append(AIMessage(content=msg["content"]))
+                    elif msg["role"] == "system":
+                        astream_messages.append(SystemMessage(content=msg["content"]))
+                async for chunk in graph.astream({"messages": astream_messages}):
+                    content = chunk.get("content", "")
+                    full_answer += content
+                    yield content
         background_tasks.add_task(
             update_chat_history_entry,
             session_id=session_id,

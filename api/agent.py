@@ -2,6 +2,8 @@ from langchain_openai import ChatOpenAI
 from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
 from typing import TypedDict, Literal, List, Optional, Dict, Any
 from pymongo import MongoClient
 from bson import ObjectId
@@ -205,8 +207,24 @@ async def get_agent_graph(
         system_prompt = "You are a helpful general-purpose assistant."
         final_agent_id = None
         final_agent_name = "Generalist"
-        agent_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, streaming=True, max_retries=3)
-        graph = create_react_agent(agent_llm, [])
+
+        messages_list = [SystemMessage(content=system_prompt)]
+        for entry in chat_history:
+            messages_list.append(HumanMessage(content=entry["user"]))
+            messages_list.append(AIMessage(content=entry["assistant"]))
+        messages_list.append(HumanMessage(content=question))
+
+        agent_llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, temperature=0.7, max_retries=3)
+        graph = agent_llm
+
+        messages_dict = convert_messages_to_dict(messages_list)
+
+        return {
+            "graph": graph,
+            "messages": messages_dict,
+            "final_agent_name": final_agent_name,
+            "final_agent_id": None,
+        }
 
     messages_list = [SystemMessage(content=system_prompt)]
     for entry in chat_history:
