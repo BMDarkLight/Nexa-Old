@@ -1,6 +1,5 @@
 import string
 import secrets
-import hashlib
 import os
 
 from datetime import datetime, timedelta
@@ -8,8 +7,9 @@ from typing import Optional
 from fastapi import HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from pymongo import MongoClient
 from passlib.context import CryptContext
+
+from api.database import users_db
 
 def generate_random_string(length: int = 32) -> str:
     alphabet = string.ascii_letters + string.digits
@@ -18,10 +18,6 @@ def generate_random_string(length: int = 32) -> str:
 SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", generate_random_string())
 ALGORITHM = os.environ.get("AUTH_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("AUTH_TOKEN_EXPIRE", 1440))
-
-users_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.users
-prospective_users_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.prospective_users
-orgs_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.organizations
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -45,3 +41,14 @@ def verify_token(token: str):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    pw_bytes = password.encode("utf-8")[:72]
+    return pwd_context.hash(pw_bytes)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    pw_bytes = plain_password.encode("utf-8")[:72]
+    try:
+        return pwd_context.verify(pw_bytes, hashed_password)
+    except Exception:
+        return False

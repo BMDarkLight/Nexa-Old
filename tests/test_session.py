@@ -4,8 +4,7 @@ from unittest.mock import patch, AsyncMock
 import asyncio
 
 from api.main import app, pwd_context
-from api.auth import users_db
-from api.agent import sessions_db
+from api.database import users_db, sessions_db
 
 client = TestClient(app)
 

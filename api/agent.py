@@ -2,7 +2,7 @@ from langchain_openai import ChatOpenAI
 from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from typing import TypedDict, Literal, List, Optional, Dict, Any
+from typing import Literal, List, Optional, Dict, Any
 from pymongo import MongoClient
 from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict
@@ -13,15 +13,11 @@ import importlib
 import logging
 import unidecode
 
-sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
-agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
-connectors_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.connectors
+from api.schemas.base import PyObjectId
+from api.schemas.agents import Tools, Models
+from api.schemas.connectors import Connectors
 
-Tools = Literal["search_web"]
-
-Connectors = Literal["google_sheet", "google_drive", "source_pdf", "source_uri"]
-
-Models = Literal["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-5"]
+from api.database import agents_db, connectors_db
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     name_ascii = unidecode.unidecode(name)
@@ -31,82 +27,6 @@ def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     tool_name = f"{prefix}_{sanitized}".lower()
     llm_label = name.strip()
     return {"tool_name": tool_name, "llm_label": llm_label}
-
-class PyObjectId(ObjectId):
-    @classmethod
-    def __get_pydantic_core_schema__(cls, _source_type, _handler):
-        from pydantic_core import core_schema
-        def validate_object_id(v):
-            if isinstance(v, ObjectId):
-                return v
-            if ObjectId.is_valid(v):
-                return ObjectId(v)
-            raise ValueError("Invalid ObjectId")
-
-        return core_schema.json_or_python_schema(
-            json_schema=core_schema.no_info_after_validator_function(validate_object_id, core_schema.str_schema()),
-            python_schema=core_schema.no_info_plain_validator_function(validate_object_id),
-            serialization=core_schema.plain_serializer_function_ser_schema(str),
-        )
-
-class Connector(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    name: str
-    connector_type: Connectors
-    settings: Dict[str, Any]
-    org: PyObjectId
-
-class ConnectorCreate(BaseModel):
-    name: str
-    connector_type: Connectors
-    settings: Dict[str, Any]
-
-class ConnectorUpdate(BaseModel):
-    name: Optional[str] = None
-    settings: Optional[Dict[str, Any]] = None
-
-class Agent(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
-    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    name: str
-    description: str
-    org: PyObjectId
-    model: Models
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    tools: list[Tools]
-    connector_ids: List[PyObjectId] = Field(default_factory=list)
-    created_at: str
-    updated_at: str
-
-class AgentCreate(BaseModel):
-    name: str
-    description: str
-    model: Models
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    tools: List[Tools] = []
-    connector_ids: List[PyObjectId] = Field(default_factory=list)
-
-class AgentUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    model: Optional[Models] = None
-    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    tools: Optional[List[Tools]] = None
-    connector_ids: Optional[List[PyObjectId]] = None
-
-class ChatHistoryEntry(TypedDict):
-    user: str
-    assistant: str
-    agent_id: Optional[str]
-    agent_name: str
-
-class AgentState(TypedDict, total=False):
-    question: str
-    chat_history: List[ChatHistoryEntry]
-    agent_id: Optional[str]
-    agent_name: str
-    answer: str
 
 def convert_messages_to_dict(messages: List[Any]) -> List[Dict[str, str]]:
     result = []

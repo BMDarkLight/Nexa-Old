@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from bson import ObjectId
 
 from api.main import app, pwd_context
-from api.auth import users_db, prospective_users_db, orgs_db
+from api.database import users_db, prospective_users_db, orgs_db
 
 client = TestClient(app)
 

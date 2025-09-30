@@ -2,9 +2,10 @@ import pytest
 from fastapi.testclient import TestClient
 from bson import ObjectId
 import uuid
+
 from api.main import app, pwd_context
-from api.auth import users_db, orgs_db
-from api.agent import sessions_db
+from api.agent import get_agent_graph
+from api.database import users_db, orgs_db, sessions_db
 
 client = TestClient(app)
 
@@ -51,18 +52,27 @@ def test_user_token(test_user):
 
 @pytest.fixture(autouse=True)
 def mock_agent_graph(monkeypatch):
+    from langchain_core.prompts.chat import ChatPromptValue
+    from api.agent import get_agent_graph as original_get_agent_graph
+
     class MockGraph:
         async def astream(self, *args, **kwargs):
+            # Yield chunks as dictionaries to simulate streaming
             for chunk in [{"content": "Mocked "}, {"content": "Response"}]:
                 yield chunk
+
     async def mock_get_agent_graph(*args, **kwargs):
         return {
             "graph": MockGraph(),
             "messages": [],
             "final_agent_name": "Mocked Agent",
-            "final_agent_id": str(ObjectId())
+            "final_agent_id": str(ObjectId()),
+            "astream_input": ChatPromptValue.from_messages([
+                {"role": "user", "content": "Hello"}
+            ])
         }
-    monkeypatch.setattr("api.main.get_agent_graph", mock_get_agent_graph)
+
+    monkeypatch.setattr("api.agent.get_agent_graph", mock_get_agent_graph)
 
 def test_ask_new_session(test_user_token, test_user):
     resp = client.post(

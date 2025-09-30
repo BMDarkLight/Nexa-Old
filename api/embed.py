@@ -1,12 +1,12 @@
-from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
 from bson import ObjectId
-from pymongo import MongoClient
-from datetime import datetime
-import os
+
+import datetime
 import numpy as np
 
-knowledge_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.embeddings
+from api.database import knowledge_db
+
 embedding_model = OpenAIEmbeddings()
 
 def embed(text: str, chunk_size: int = 1000, overlap: int = 200) -> list:

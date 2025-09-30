@@ -1,12 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
 from bson import ObjectId
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from api.main import app, pwd_context
-from api.auth import users_db, orgs_db
-from api.agent import agents_db, connectors_db, get_agent_graph
+from api.database import users_db, orgs_db, agents_db, connectors_db
 
 client = TestClient(app)
 
