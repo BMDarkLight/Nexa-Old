@@ -11,6 +11,9 @@ from api.agent import get_agent_graph
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate
 from api.auth import verify_token, oauth2_scheme
 
+# Import for BaseMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
+
 
 router = APIRouter(tags=["Agent"])
 
@@ -72,17 +75,17 @@ async def ask(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
 
         full_answer = ""
-        astream_input = {"messages": []}
-        astream_input["messages"].append({
-            "role": "system",
-            "content": f"You are an AI agent built by user in Nexa AI platform. "
-                       f"You are now operating as the agent named {agent_name}. "
-                       f"Description: {agent_graph.get('description', 'No description provided')}."
-        })
+        # Build list of BaseMessage objects for astream
+        astream_input = []
+        astream_input.append(SystemMessage(
+            content=f"You are an AI agent built by user in Nexa AI platform. "
+                    f"You are now operating as the agent named {agent_name}. "
+                    f"Description: {agent_graph.get('description', 'No description provided')}."
+        ))
         for entry in chat_history:
-            astream_input["messages"].append({"role": "user", "content": entry["user"]})
-            astream_input["messages"].append({"role": "assistant", "content": entry["assistant"]})
-        astream_input["messages"].append({"role": "user", "content": query.query})
+            astream_input.append(HumanMessage(content=entry["user"]))
+            astream_input.append(AIMessage(content=entry["assistant"]))
+        astream_input.append(HumanMessage(content=query.query))
 
         async for chunk in graph.astream(astream_input):
             content = ""
@@ -167,15 +170,15 @@ async def regenerate(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
 
         full_answer = ""
-        astream_input = {"messages": []}
-        astream_input["messages"].append({
-            "role": "system",
-            "content": f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-        })
+        # Build list of BaseMessage objects for astream
+        astream_input = []
+        astream_input.append(SystemMessage(
+            content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+        ))
         for entry in truncated_history:
-            astream_input["messages"].append({"role": "user", "content": entry["user"]})
-            astream_input["messages"].append({"role": "assistant", "content": entry["assistant"]})
-        astream_input["messages"].append({"role": "user", "content": original_query})
+            astream_input.append(HumanMessage(content=entry["user"]))
+            astream_input.append(AIMessage(content=entry["assistant"]))
+        astream_input.append(HumanMessage(content=original_query))
         async for chunk in graph.astream(astream_input):
             content = getattr(chunk, "content", None)
             if content is None and isinstance(chunk, dict):
@@ -246,15 +249,14 @@ async def edit_message(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
 
         full_answer = ""
-        astream_input = {"messages": []}
-        astream_input["messages"].append({
-            "role": "system",
-            "content": f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-        })
+        astream_input = []
+        astream_input.append(SystemMessage(
+            content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+        ))
         for entry in truncated_history:
-            astream_input["messages"].append({"role": "user", "content": entry["user"]})
-            astream_input["messages"].append({"role": "assistant", "content": entry["assistant"]})
-        astream_input["messages"].append({"role": "user", "content": query})
+            astream_input.append(HumanMessage(content=entry["user"]))
+            astream_input.append(AIMessage(content=entry["assistant"]))
+        astream_input.append(HumanMessage(content=query))
         async for chunk in graph.astream(astream_input):
             content = getattr(chunk, "content", None)
             if content is None and isinstance(chunk, dict):

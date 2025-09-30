@@ -7,7 +7,7 @@ from langchain.schema import SystemMessage, HumanMessage, AIMessage
 from api.auth import oauth2_scheme, verify_token
 from api.database import sessions_db
 
-router = APIRouter(prefix="/sessions", tags=["Sessions"])
+router = APIRouter(tags=["Sessions"])
 
 @router.get("/sessions", response_model=List[dict])
 def list_sessions(token: str = Depends(oauth2_scheme)):
