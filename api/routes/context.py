@@ -31,7 +31,32 @@ def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
     return Context(**context)
 
 @router.get("/agents/{agent_id}/context/{context_id}")
-def get_context_entry_document(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):
+def get_context_entry(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+
+    if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
+        raise HTTPException(status_code=400, detail="Invalid ID format.")
+    
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to view it.")
+    
+    if ObjectId(context_id) not in agent["context"]:
+        raise HTTPException(status_code=404, detail="Context entry not found in this agent.")
+    
+    content = get_embeddings(ObjectId(context_id))
+
+    if not content:
+        raise HTTPException(status_code=404, detail="Context entry not found or you do not have permission to view it.")
+    
+    return content
+
+@router.get("/agents/{agent_id}/context/{context_id}/ingested_content")
+def get_ingested_content(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
 
     if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
@@ -53,7 +78,7 @@ def get_context_entry_document(agent_id: str, context_id: str, token: str = Depe
     if not context_entry:
         raise HTTPException(status_code=404, detail="Context entry not found or you do not have permission to view it.")
     
-    return context_entry
+    return {"ingested_content": context_entry.get("chunks", [])}
 
 @router.post("/agents/{agent_id}/context")
 async def upload_context_file(agent_id: str, file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
