@@ -2,29 +2,14 @@ from fastapi import Depends, APIRouter, HTTPException, UploadFile, File, status
 from fastapi.responses import JSONResponse
 from bson import ObjectId
 
-from api.embed import embed, save_embedding, get_embeddings, similarity
+import io
+
+from api.embed import embed, save_embedding, get_embeddings
 from api.database import agents_db, knowledge_db, minio_client
 from api.auth import verify_token, oauth2_scheme
-from api.schemas.context import Context
-
-import PyPDF2, io
-import docx
+from api.schemas.context import Context, extract_text_from_pdf, extract_text_from_docx, extract_text_from_excel, extract_text_from_csv
 
 router = APIRouter(tags=["Context Management"])
-
-def extract_text_from_pdf(file_content: bytes) -> str:
-    pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text() + "\n"
-    return text
-
-def extract_text_from_docx(file_content: bytes) -> str:
-    doc = docx.Document(io.BytesIO(file_content))
-    text = ""
-    for para in doc.paragraphs:
-        text += para.text + "\n"
-    return text
 
 @router.get("/agents/{agent_id}/context")
 def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
@@ -122,7 +107,9 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
         elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
             raise HTTPException(status_code=400, detail="Support for PowerPoint not implemented yet.")
         elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-            raise HTTPException(status_code=400, detail="Support for Excel not implemented yet.")
+            text = extract_text_from_excel(file_content)
+        elif content_type == "text/csv":
+            text = extract_text_from_csv(file_content)
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type.")
         
@@ -198,7 +185,9 @@ async def reupload_context_file(
         elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
             raise HTTPException(status_code=400, detail="Support for PowerPoint not implemented yet.")
         elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-            raise HTTPException(status_code=400, detail="Support for Excel not implemented yet.")
+            text = extract_text_from_excel(file_content)
+        elif content_type == "text/csv":
+            text = extract_text_from_csv(file_content)
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type.")
 
