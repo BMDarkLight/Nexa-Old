@@ -36,6 +36,7 @@ class Agent(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     tools: list[Tools]
     connector_ids: List[PyObjectId] = Field(default_factory=list)
+    context: List[PyObjectId]
     created_at: str
     updated_at: str
 
@@ -46,6 +47,7 @@ class AgentCreate(BaseModel):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     tools: List[Tools] = []
     connector_ids: List[PyObjectId] = Field(default_factory=list)
+    context: List[PyObjectId] = []
 
 class AgentUpdate(BaseModel):
     name: Optional[str] = None
@@ -54,6 +56,7 @@ class AgentUpdate(BaseModel):
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     tools: Optional[List[Tools]] = None
     connector_ids: Optional[List[PyObjectId]] = None
+    context: Optional[List[PyObjectId]] = None
 
 def save_chat_history(session_id: str, user_id: str, chat_history: list, query: str, answer: str, agent_id: str, agent_name: str):
     new_history_entry = {

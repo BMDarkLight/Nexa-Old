@@ -11,8 +11,7 @@ from api.agent import get_agent_graph
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate
 from api.auth import verify_token, oauth2_scheme
 
-# Import for BaseMessage, SystemMessage, HumanMessage, AIMessage
-from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 
 router = APIRouter(tags=["Agent"])
@@ -75,7 +74,6 @@ async def ask(
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
 
         full_answer = ""
-        # Build list of BaseMessage objects for astream
         astream_input = []
         astream_input.append(SystemMessage(
             content=f"You are an AI agent built by user in Nexa AI platform. "
