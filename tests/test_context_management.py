@@ -67,7 +67,7 @@ def test_get_ingested_content_success(mock_dependencies):
     assert "ingested_content" in response.json()
 
 
-def test_upload_context_file_success(mock_dependencies):
+def test_upload_context_file_success(mock_dependencies, mocker):
     agent_id = str(ObjectId())
     mock_dependencies["agents_db"].find_one.return_value = {"_id": ObjectId(agent_id), "context": []}
 
@@ -80,6 +80,10 @@ def test_upload_context_file_success(mock_dependencies):
     # Use mocker to patch
     import pytest
     pytest.MonkeyPatch().setattr("PyPDF2.PdfReader", lambda _: mock_reader)
+
+    # Mock minio_client.put_object to avoid real MinIO connection
+    mock_minio_client = mocker.patch("api.routes.context.minio_client")
+    mock_minio_client.put_object = mocker.Mock(return_value=None)
 
     # Use a minimal valid PDF header (reader is mocked anyway)
     pdf_buffer = io.BytesIO(b"%PDF-1.4\n%EOF\n")
