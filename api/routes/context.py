@@ -284,3 +284,36 @@ def delete_context_entry(agent_id: str, context_id: str, token: str = Depends(oa
         raise HTTPException(status_code=500, detail="Failed to delete the context entry.")
     
     return {"message": "Context Entry Deleted successfully"}
+
+@router.get("/agents/{agent_id}/context/{context_id}/download")
+def download_context_file(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+
+    if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
+        raise HTTPException(status_code=400, detail="Invalid ID format.")
+
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id),
+        "org": ObjectId(user["organization"])
+    })
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to access it.")
+
+    if ObjectId(context_id) not in agent.get("context", []):
+        raise HTTPException(status_code=404, detail="Context entry not found in this agent.")
+
+    context_entry = knowledge_db.find_one({"_id": ObjectId(context_id), "org": ObjectId(user["organization"])})
+    if not context_entry:
+        raise HTTPException(status_code=404, detail="Context entry not found or you do not have permission to access it.")
+
+    file_key = context_entry.get("file_key")
+    if not file_key:
+        raise HTTPException(status_code=404, detail="No file associated with this context entry.")
+
+    try:
+        presigned_url = minio_client.presigned_get_object(bucket_name="context-files", object_name=file_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {str(e)}")
+
+    return {"download_url": presigned_url}
