@@ -8,8 +8,23 @@ from api.auth import verify_token, oauth2_scheme
 from api.schemas.context import Context
 
 import PyPDF2, io
+import docx
 
 router = APIRouter(tags=["Context Management"])
+
+def extract_text_from_pdf(file_content: bytes) -> str:
+    pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text() + "\n"
+    return text
+
+def extract_text_from_docx(file_content: bytes) -> str:
+    doc = docx.Document(io.BytesIO(file_content))
+    text = ""
+    for para in doc.paragraphs:
+        text += para.text + "\n"
+    return text
 
 @router.get("/agents/{agent_id}/context")
 def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
@@ -95,18 +110,24 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to modify it.")
     
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-    
+    content_type = file.content_type
+
     try:
         file_content = await file.read()
-        pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
+
+        if content_type == "application/pdf":
+            text = extract_text_from_pdf(file_content)
+        elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            text = extract_text_from_docx(file_content)
+        elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+            raise HTTPException(status_code=400, detail="Support for PowerPoint not implemented yet.")
+        elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+            raise HTTPException(status_code=400, detail="Support for Excel not implemented yet.")
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type.")
         
         if not text.strip():
-            raise HTTPException(status_code=400, detail="The uploaded PDF contains no extractable text.")
+            raise HTTPException(status_code=400, detail="The uploaded document contains no extractable text.")
         
         chunks_with_embeddings = embed(text)
         
@@ -122,6 +143,8 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
         
         return JSONResponse(status_code=201, content={"message": "Context uploaded and processed successfully.", "context_id": str(context_id)})
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred while processing the file: {str(e)}")
     
@@ -159,4 +182,3 @@ def delete_context_entry(agent_id: str, context_id: str, token: str = Depends(oa
         raise HTTPException(status_code=500, detail="Failed to delete the context entry.")
     
     return {"message": "Context Entry Deleted successfully"}
-

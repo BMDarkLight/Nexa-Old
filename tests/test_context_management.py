@@ -105,7 +105,7 @@ def test_upload_context_file_invalid_type(mock_dependencies):
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Only PDF files are supported."
+    assert response.json()["detail"] == "Unsupported file type."
 
 
 def test_delete_context_entry_success(mock_dependencies):
