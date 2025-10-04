@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { Switch } from "@/components/ui/switch";
 import ReturnBtn from "./ReturnBtn";
 import { useAgent } from "@/app/dashboard/context/AgentsContext";
+import { toast } from "sonner";
 
 interface Connector {
   _id: string;
@@ -59,7 +60,14 @@ export default function NewAgent() {
         }
 
         if (!res.ok) {
-          alert("خطا در گرفتن کانکتورها. لطفا دوباره تلاش کنید");
+          toast.error("ارتباط با سرور برقرار نشد.", {
+            icon: null,
+            style: {
+              background: "#DC2626",
+              color: "#fff",
+            },
+            duration: 2000,
+          });
           return;
         }
 
@@ -71,7 +79,14 @@ export default function NewAgent() {
 
         setConnectors(connectedConnectors);
       } catch {
-        alert("خطا در لیست کانکتورها لطفا دوباره تلاش کنید");
+        toast.error("ارتباط با سرور برقرار نشد.", {
+          icon: null,
+          style: {
+            background: "#DC2626",
+            color: "#fff",
+          },
+          duration: 2000,
+        });
       }
     };
 

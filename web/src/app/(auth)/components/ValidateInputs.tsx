@@ -10,6 +10,7 @@ import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 interface IUserData {
   username: string;
@@ -28,9 +29,9 @@ const End_point: string = "/signin";
 const API_PORT: string = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 const schema = Yup.object({
-  username: Yup.string().required("لطفا نام کاربری خود را وارد کنید"),
+  username: Yup.string().required("لطفا نام کاربری وارد کنید"),
   password: Yup.string()
-    .required("وارد کردن رمز عبور اجباری است")
+    .required("لطفاً رمز عبور را وارد کنید.")
     .min(8, "رمز عبور باید حداقل 8 کاراکتر باشد")
     .matches(
       /^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z\d]{8,}$/,
@@ -72,8 +73,7 @@ export default function ValidateInputs() {
           title: "خطا",
           text: error,
         });
-
-
+        
         url.searchParams.delete("error");
         window.history.replaceState({}, "", url.toString());
       }
@@ -99,11 +99,14 @@ export default function ValidateInputs() {
       const result: ILoginResponse = await loginRes.json();
 
       if (!loginRes.ok || !result.access_token) {
-        Swal.fire({
-          icon: "error",
-          title: "خطا",
-          text: "نام کاربری یا رمز عبور اشتباه است!",
-        });
+        toast.error("رمز عبور یا ایمیل نادرست است." , {
+          icon:null , 
+          style:{
+            background:"#DC2626" , 
+            color: "#fff"
+          },
+          duration: 2000
+        })
         return;
       }
 
@@ -112,15 +115,25 @@ export default function ValidateInputs() {
 
       setCookie("auth_token", access_token, 7);
       setCookie("token_type", token_type, 7);
-
+      toast.success("ورود شما با موفقیت انجام شد." , {
+          icon:null , 
+          style:{
+            background:"#2A9D90" , 
+            color: "#fff"
+          },
+          duration: 2000
+        })
       reset();
       router.push("/dashboard");
     } catch {
-      Swal.fire({
-        icon: "error",
-        title: "خطا",
-        text: "مشکلی در ارتباط با سرور پیش آمده است",
-      });
+      toast.error("ارتباط با سرور برقرار نشد." , {
+          icon:null , 
+          style:{
+            background:"#DC2626" , 
+            color: "#fff"
+          },
+          duration: 2000
+        })
     }
   };
 

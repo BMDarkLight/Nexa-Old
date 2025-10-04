@@ -20,6 +20,7 @@ import DeleteAgent from "./DeleteAgent";
 import Link from "next/link";
 import Cookie from "js-cookie";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 interface Agents {
   _id: string;
@@ -47,8 +48,7 @@ const connectorIcons: Record<string, { name: string; src: string }> = {
   source_pdf: { name: "PDF", src: "/Squad/image/card-img.png" },
 };
 
-const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
@@ -69,7 +69,7 @@ export default function AgentCard() {
         const tokenType = Cookie.get("token_type");
 
         if (!token || !tokenType) {
-          alert("ابتدا وارد حساب کاربری خود شوید");
+          alert("ابتدا وارد حساب کاربری خود شوید.");
           router.push("/login");
           return;
         }
@@ -85,7 +85,9 @@ export default function AgentCard() {
         );
 
         if (!validateRes.ok) {
-          alert("مدت زمان اعتبار توکن شما منقضی شده است. لطفاً دوباره وارد شوید");
+          alert(
+            "مدت زمان اعتبار موندن شما منقضی شده است. لطفاً دوباره وارد شوید"
+          );
           router.push("/login");
           return;
         }
@@ -117,12 +119,6 @@ export default function AgentCard() {
                 }
               );
 
-              if (resConn.status === 401) {
-                alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
-                router.push("/login");
-                return;
-              }
-
               const connectorsData = await resConn.json();
               if (resConn.ok) {
                 setAgentConnectors((prev) => ({
@@ -135,7 +131,14 @@ export default function AgentCard() {
         } else {
         }
       } catch {
-        alert("خطا در برقراری ارتباط با سرور");
+        toast.error("ارتباط با سرور برقرار نشد.", {
+          icon: null,
+          style: {
+            background: "#DC2626",
+            color: "#fff",
+          },
+          duration: 2000,
+        });
       } finally {
         setLoading(false);
       }

@@ -10,6 +10,8 @@ import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
 import Swal from "sweetalert2";
 import Cookie from "js-cookie";
+import { toast } from "sonner";
+
 interface IUserData {
   username: string;
   password: string;
@@ -25,7 +27,7 @@ export type TFormValue = {
   username: string;
 };
 const schema = Yup.object({
-  username: Yup.string().required("این فیلد اجباری است"),
+  username: Yup.string().required("لطفا نام کاربری وارد کنید"),
 });
 export default function ForgetPasswordCom() {
   const {
@@ -36,38 +38,51 @@ export default function ForgetPasswordCom() {
     reset,
   } = useForm<TFormValue>({
     resolver: yupResolver(schema),
+    mode: "onTouched",
   });
-  const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+  const API_Base_Url =
+    process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
   const End_point = "/forgot-password";
-  const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000" ;
+  const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
   const onSubmit = async (data: TFormValue) => {
     try {
-      const loginRes = await fetch(
-        `${API_Base_Url}:${API_PORT}${End_point}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body:JSON.stringify({
-            username: data.username
-          })
-        }
-      );
+      const loginRes = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: data.username,
+        }),
+      });
 
       if (!loginRes.ok) {
-        alert("اتصال به سرور به درستی انجام نشد")
+        toast.error("حسابی با این نام کاربری یافت نشد. ابتدا ثبت نام کنید", {
+          icon: null,
+          style: {
+            background: "#DC2626",
+            color: "#fff",
+          },
+          duration: 2000,
+        });
+        return;
       }
 
-      Swal.fire({
-        icon: "success",
-        title: "موفق",
-        text: "ایمیل با موفقیت فرستاده شد",
+      toast.success("ورود شما با موفقیت انجام شد.", {
+        icon: null,
+        style: {
+          background: "#2A9D90",
+          color: "#fff",
+        },
+        duration: 2000,
       });
       reset();
     } catch (err) {
-      Swal.fire({
-        icon: "error",
-        title: "خطا",
-        text: "خطای ناشناخته",
+      toast.error("ارتباط با سرور برقرار نشد.", {
+        icon: null,
+        style: {
+          background: "#DC2626",
+          color: "#fff",
+        },
+        duration: 2000,
       });
     }
   };
@@ -84,12 +99,10 @@ export default function ForgetPasswordCom() {
             <Label htmlFor="username">
               نام کاربری<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input
-              id="username"
-              type="text"
-              {...register("username")}
-            />
-            {}
+            <Input id="username" type="text" {...register("username")} />
+            {errors.username && (
+              <p className="text-red-500 text-xs">{errors.username.message}</p>
+            )}
           </div>
           <Button type="submit" className="w-full cursor-pointer">
             دریافت لینک تغییر رمز

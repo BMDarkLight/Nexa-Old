@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import localFont from "next/font/local";
 import { AppSidebar } from "@/components/app-sidebar"
+import { ThemeProvider } from "next-themes";
 import {
   SidebarInset,
   SidebarProvider,
@@ -10,6 +11,8 @@ import {
 } from "@/components/ui/sidebar"
 import H2Tag from "@/components/H2Tag";
 import { SessionProvider } from "./dashboard/context/sessionContext";
+import { Toaster } from "sonner";
+import ToastProvider from "@/components/ToasterProvider";
 
 
 const myFont = localFont({
@@ -41,6 +44,7 @@ export default function RootLayout({
              <SessionProvider>
               {children}
              </SessionProvider>
+             <ToastProvider />
       </body>
     </html>
   );

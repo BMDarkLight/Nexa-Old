@@ -10,6 +10,7 @@ import * as Yup from "yup";
 import { useRouter, useSearchParams } from "next/navigation";
 import Swal from "sweetalert2";
 import { Eye, EyeOff } from "lucide-react";
+import { toast } from "sonner";
 
 export type TFormValue = {
   password: string;
@@ -18,27 +19,31 @@ export type TFormValue = {
 
 const schema = Yup.object({
   password: Yup.string()
-    .required("وارد کردن رمز عبور اجباری است").min(8 , "رمز عبور باید حداقل 8 کارکتر باشد").matches(/^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z\d]{8,}$/ , "رمز عبور باید شامل حروف انگلیسی و حداقل یک عدد باشد (بدون علائم)"),
+    .required("لطفاً رمز عبور را وارد کنید.")
+    .min(8, "رمز عبور باید حداقل 8 کارکتر باشد")
+    .matches(
+      /^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z\d]{8,}$/,
+      "رمز عبور باید شامل حروف انگلیسی و حداقل یک عدد باشد (بدون علائم)"
+    ),
   cpassword: Yup.string()
-    .oneOf([Yup.ref("password")], "رمز عبور خود را مجددا تکرار کنید")
+    .oneOf([Yup.ref("password")], "لطفاً تکرار رمز عبور را وارد کنید.")
     .required(),
 });
 
 type FormValues = Yup.InferType<typeof schema>;
 
 const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
-const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000" ;
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 const End_point = "/reset-password";
 
 export default function ResetPasswordCom() {
-  const router = useRouter()
+  const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
   const username = searchParams.get("username");
   console.log(token);
   console.log(username);
-  
-  
+
   // state for show password
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -64,20 +69,33 @@ export default function ResetPasswordCom() {
       });
       // error handeling
       if (!respond.ok) {
-        Swal.fire({
-          icon: "error",
-          title: "خطا",
-          text: "خطا به وجود آمد",
+        toast.error("رمز عبور و تکرار آن مطابقت ندارند.", {
+          icon: null,
+          style: {
+            background: "#DC2626",
+            color: "#fff",
+          },
+          duration: 2000,
         });
         return;
       }
-      Swal.fire({ icon: "success", title: "موفقیت"  , confirmButtonText : "بازگشت به صفحه ورود"}).then((result)=>{
-          if(result.isConfirmed){
-            router.push("/login")
-          }
+      toast.success("رمز عبور جدید با موفقیت ثبت شد.", {
+        icon: null,
+        style: {
+          background: "#2A9D90",
+          color: "#fff",
+        },
+        duration: 2000,
       });
-    } catch(err) {
-      alert("خطایی رخ داده است")
+    } catch (err) {
+      toast.error("ارتباط با سرور برقرار نشد.", {
+        icon: null,
+        style: {
+          background: "#DC2626",
+          color: "#fff",
+        },
+        duration: 2000,
+      });
     }
   }
 
@@ -94,16 +112,10 @@ export default function ResetPasswordCom() {
             <Label htmlFor="password1">
               رمز عبور جدید<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input
-              id="password1"
-              type="text"
-              {...register("password")}
-            />
-            {
-              errors.password && (
-                 <p className="text-xs text-red-400">{errors.password.message}</p>
-              )
-            }
+            <Input id="password1" type="text" {...register("password")} />
+            {errors.password && (
+              <p className="text-xs text-red-400">{errors.password.message}</p>
+            )}
           </div>
 
           <div className="grid gap-3 relative">

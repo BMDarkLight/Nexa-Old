@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/sidebar";
 import H2Tag from "@/components/H2Tag";
 import { ChatProvider } from "./context/ChatContext";
+import ToastProvider from "@/components/ToasterProvider";
 
 export default function DashboardLayout({
   children,

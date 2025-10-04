@@ -1,4 +1,4 @@
-"use client"
+"use client";
 import React, { useState } from "react";
 import ReturnBtn from "./ReturnBtn";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { useAgent } from "@/app/dashboard/context/AgentsContext";
 import { useRouter } from "next/navigation";
 import Cookie from "js-cookie";
+import { toast } from "sonner";
 
 const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
@@ -56,7 +57,14 @@ export default function NameAgentCom() {
       }
 
       if (!res.ok) {
-        alert( "خطا در ایجاد ایجنت. لطفا دوباره تلاش کنید");
+        toast.error("خطا در ایجاد ایجنت لطفا مجددا تلاش کنید.", {
+          icon: null,
+          style: {
+            background: "#DC2626",
+            color: "#fff",
+          },
+          duration: 2000,
+        });
         return;
       }
 
@@ -76,22 +84,37 @@ export default function NameAgentCom() {
             }
           );
 
-          if (connectorRes.status === 401) {
-            alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
-            router.push("/login");
-            return;
-          }
-
           if (!connectorRes.ok) {
-            alert("خطا در افزودن یکی از کانکتورها. لطفا دوباره تلاش کنید");
+            toast.error("ارتباط با سرور برقرار نشد.", {
+              icon: null,
+              style: {
+                background: "#DC2626",
+                color: "#fff",
+              },
+              duration: 2000,
+            });
           }
         }
       }
 
-      alert("ایجنت با موفقیت ذخیره شد");
+      toast.success("ایجنت با موفقیت ساخته شد.", {
+        icon: null,
+        style: {
+          background: "#2A9D90",
+          color: "#fff",
+        },
+        duration: 2000,
+      });
       router.push("/dashboard/agent");
     } catch {
-      alert("خطا در ذخیره ایجنت. لطفا دوباره تلاش کنید");
+      toast.error("ارتباط با سرور برقرار نشد.", {
+        icon: null,
+        style: {
+          background: "#DC2626",
+          color: "#fff",
+        },
+        duration: 2000,
+      });
     } finally {
       setSaving(false);
     }
