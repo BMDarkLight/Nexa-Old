@@ -2,27 +2,34 @@ from langchain_openai import ChatOpenAI
 from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from typing import Literal, List, Optional, Dict, Any
-from pymongo import MongoClient
+from typing import List, Optional, Dict, Any
 from bson import ObjectId
-from pydantic import BaseModel, Field, ConfigDict
 
-import os
 import re
 import importlib
 import logging
 import unidecode
 
-from api.embed import similarity, get_embeddings
+from api.embed import similarity, embed_question
 
-from api.database import agents_db, connectors_db
+from api.database import agents_db, connectors_db, knowledge_db
 
-# Placeholder for the semantic retrieval function; should be implemented elsewhere
-async def retrieve_relevant_context(question: str, context_docs: List[Dict[str, Any]]) -> str:
-    # This function should perform semantic search over pre-embedded documents in knowledge_db
-    # and return a consolidated relevant context string.
-    # For now, just concatenate all context docs' 'content' fields as a placeholder.
-    return "\n".join(doc.get("content", "") for doc in context_docs)
+
+def retrieve_relevant_context(question_emb: list, context_docs: List[Dict[str, Any]], top_n: int = 3) -> str:
+    if not context_docs or not question_emb:
+        return ""
+
+    scored_docs = []
+    for doc in context_docs:
+        doc_emb = doc.get("embedding")
+        if doc_emb:
+            score = similarity(question_emb, doc_emb)
+            scored_docs.append((score, doc))
+
+    scored_docs.sort(reverse=True, key=lambda x: x[0])
+    top_docs = [doc for _, doc in scored_docs[:top_n]]
+
+    return "\n".join(doc.get("text", "") for doc in top_docs)
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     name_ascii = unidecode.unidecode(name)
@@ -51,8 +58,7 @@ async def get_agent_graph(
     question: str,
     organization_id: ObjectId,
     chat_history: Optional[List[dict]] = None,
-    agent_id: Optional[str] = None,
-    knowledge_db: Optional[List[Dict[str, Any]]] = None,
+    agent_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Returns a dict with:
@@ -147,7 +153,14 @@ async def get_agent_graph(
                         return output
                     tool.run = logging_run
 
-        context_docs = knowledge_db if knowledge_db else []
+        context_ids = selected_agent.get("context", [])
+
+        context_docs = []
+        for context_entry_id in context_ids:
+            entry_doc = knowledge_db.find_one({"_id": ObjectId(context_entry_id)})
+            if entry_doc and "chunks" in entry_doc:
+                context_docs.extend(entry_doc["chunks"])
+
         relevant_context = await retrieve_relevant_context(question, context_docs)
 
         system_prompt = f"""

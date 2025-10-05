@@ -21,6 +21,12 @@ def embed(text: str, chunk_size: int = 1000, overlap: int = 200) -> list:
     
     return [{"text": chunk, "embedding": emb} for chunk, emb in zip(chunks, embeddings)]
 
+def embed_question(question: str) -> list:
+    chunks = embed(question, chunk_size=2000, overlap=0)
+    if not chunks:
+        return []
+    return chunks[0]["embedding"]
+
 def embed_tabular(df: pd.DataFrame, org_id: ObjectId) -> ObjectId:
     columns = df.columns.tolist()
     sample_rows = df.head(3).to_dict(orient='records')
