@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Dict, Any
 
 from fastapi import HTTPException
 
@@ -45,5 +45,32 @@ def extract_text_from_csv(file_content: bytes) -> str:
     except Exception:
         raise HTTPException(status_code=400, detail="Failed to extract text from CSV file.")
 
-class Context(BaseModel):
-    documents: List[PyObjectId] = None
+def extract_table_from_excel(file_content: bytes) -> Dict[str, Any]:
+    try:
+        df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+        schema = {col: str(dtype) for col, dtype in df.dtypes.items()}
+        sample = df.head(5).to_dict(orient='records')
+        shape = df.shape
+        return {
+            "schema": schema,
+            "sample": sample,
+            "shape": shape,
+            "dataframe": df
+        }
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to extract table from Excel file.")
+
+def extract_table_from_csv(file_content: bytes) -> Dict[str, Any]:
+    try:
+        df = pd.read_csv(io.BytesIO(file_content))
+        schema = {col: str(dtype) for col, dtype in df.dtypes.items()}
+        sample = df.head(5).to_dict(orient='records')
+        shape = df.shape
+        return {
+            "schema": schema,
+            "sample": sample,
+            "shape": shape,
+            "dataframe": df
+        }
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to extract table from CSV file.")
