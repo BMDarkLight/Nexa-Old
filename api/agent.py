@@ -13,11 +13,16 @@ import importlib
 import logging
 import unidecode
 
-from api.schemas.base import PyObjectId
-from api.schemas.agents import Tools, Models
-from api.schemas.connectors import Connectors
+from api.embed import similarity, get_embeddings
 
 from api.database import agents_db, connectors_db
+
+# Placeholder for the semantic retrieval function; should be implemented elsewhere
+async def retrieve_relevant_context(question: str, context_docs: List[Dict[str, Any]]) -> str:
+    # This function should perform semantic search over pre-embedded documents in knowledge_db
+    # and return a consolidated relevant context string.
+    # For now, just concatenate all context docs' 'content' fields as a placeholder.
+    return "\n".join(doc.get("content", "") for doc in context_docs)
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     name_ascii = unidecode.unidecode(name)
@@ -47,10 +52,11 @@ async def get_agent_graph(
     organization_id: ObjectId,
     chat_history: Optional[List[dict]] = None,
     agent_id: Optional[str] = None,
+    knowledge_db: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Returns a dict with:
-    - graph: the React agent graph
+    - graph: the React agent graph or fallback LLM
     - messages: the chat history in dict form
     - final_agent_name: the agent's name
     - final_agent_id: the agent's id (str) or None
@@ -141,11 +147,27 @@ async def get_agent_graph(
                         return output
                     tool.run = logging_run
 
+        context_docs = knowledge_db if knowledge_db else []
+        relevant_context = await retrieve_relevant_context(question, context_docs)
+
         system_prompt = f"""
             You are an AI agent built by user in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.
             You are now operating as the agent named **{selected_agent['name']}**.
-            Here's the description user provided for the said agent : {selected_agent.get("description") or "No description provided."}\n
-            You also have access to the following tools: {', '.join([getattr(t, 'llm_label', getattr(t, 'name', 'unknown')) for t in active_tools])}.
+            Here's the description user provided for the said agent: {selected_agent.get("description") or "No description provided."}
+
+            You have a context window of relevant information retrieved from the organization's knowledge base.
+            Use this information to help you answer user questions. If the context does not contain the information you need first.
+            Relevant context retrieved from organization's knowledge base:
+            {relevant_context}
+
+            When the information you need is not in the context, you can use the specialized connectors available to you.
+            If you need to use a connector, decide which tool is most appropriate for the task and use it.
+            If you need to use a connector multiple times, you can do so.
+            You have access to the following connectors: {', '.join([getattr(t, 'llm_label', getattr(t, 'name', 'unknown')) for t in active_tools])}.
+
+            Then if the info you need is not available in the context or via connectors, you can use your own knowledge and reasoning to answer the question.
+
+            Also, User's Organization ID is {organization_id}.
         """
 
         messages_list = [SystemMessage(content=system_prompt)]
@@ -163,11 +185,24 @@ async def get_agent_graph(
         agent_llm = ChatOpenAI(model=selected_agent["model"], temperature=selected_agent.get("temperature", 0.7), streaming=True, max_retries=3)
         graph = create_react_agent(agent_llm, active_tools)
     else:
-        system_prompt = """
+        system_prompt = f"""
             You are an AI agent called Generalist in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.
-            You do not have access to any specialized tools or connectors. You are a general-purpose fallback assistant that can help with a wide range of topics.
-        """
+            You do not have access to any specialized tools or connectors. You are a general-purpose fallback assistant that can help with a wide range of topics. You are called when no other specialized agents are available.
+            Use your own knowledge and reasoning to answer the user's question to the best of your ability.
+            And try to be resistant to answering questions that are too specific to the organization's knowledge base or require specialized tools and tell them that they need to create an AI agent in Nexa AI and create their own connectors, upload their own documents to get used as agent's knowledge base.
+            As you are a fallback agent, You should act more like an advertiser of what Nexa AI platform can do and how users can create their own agents with specialized tools and connectors to help them with their specific needs.
+            Here's an example of how they can create their own agent in Nexa AI platform:
+            1. In the dashboard, go to the "Agents" section and click on "Create Agent".
+            2. Provide a name and persona for your agent.
+            3. Select the tools and connectors you want your agent to have access to.
+            4. Upload documents to the knowledge base that your agent can use to answer questions.
+            5. Save your agent and start using it to answer questions.
+            
+            If you cannot answer a question, suggest that the user create their own agent in Nexa AI platform.
+            Always remember to promote the capabilities of Nexa AI platform and how users can create their own agents with specialized tools and connectors to help them with their specific needs.
 
+            Also, User's Organization ID is {organization_id}.
+        """
         messages_list = [SystemMessage(content=system_prompt)]
         for entry in chat_history:
             user_text = entry.get("user", "").strip()
@@ -195,7 +230,6 @@ async def get_agent_graph(
     logging.info(f"Messages going into agent: {[m.content for m in messages_list]}")
 
     messages_dict = convert_messages_to_dict(messages_list)
-
 
     return {
         "graph": graph,
