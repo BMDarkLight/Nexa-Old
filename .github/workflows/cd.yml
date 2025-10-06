@@ -77,7 +77,6 @@ jobs:
           SYSADMIN_PHONE=${{ secrets.SYSADMIN_PHONE }}
 
           SERVER_URL=${{ secrets.SERVER_URL }}
-          NEXT_PUBLIC_SERVER_URL=${{ secrets.NEXT_PUBLIC_SERVER_URL }}
           UI_PORT=${{ secrets.UI_PORT }}
           API_PORT=${{ secrets.API_PORT }}
 
@@ -89,6 +88,10 @@ jobs:
           LANGSMITH_PROJECT=${{ secrets.LANGSMITH_PROJECT }}
 
           MONGO_URI=${{ secrets.MONGO_URI }}
+
+          MINIO_ENDPOINT=${{ secrets.MINIO_ENDPOINT }}
+          MINIO_ACCESS_KEY=${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY=${{ secrets.MINIO_SECRET_KEY }}
 
           AUTH_SECRET_KEY=${{ secrets.AUTH_SECRET_KEY }}
           AUTH_ALGORITHM=${{ secrets.AUTH_ALGORITHM }}
