@@ -73,7 +73,7 @@ async def get_agent_graph(
 
     if agent_id:
         selected_agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": organization_id})
-    else:
+    elif agent_id == "auto":
         agents = list(agents_db.find({"org": organization_id}))
         if agents:
             agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in agents])
@@ -93,6 +93,8 @@ async def get_agent_graph(
             selected_agent_name_response = await router_llm.ainvoke(router_prompt)
             selected_agent_name = selected_agent_name_response.content.strip()
             selected_agent = next((agent for agent in agents if agent["name"] == selected_agent_name), None)
+    else:
+        selected_agent = None
 
     active_tools = []
 
