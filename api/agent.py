@@ -226,8 +226,6 @@ async def get_agent_graph(
                 messages_list.append(AIMessage(content=assistant_text))
         messages_list.append(HumanMessage(content=question))
 
-        logging.info(f"Messages going into agent: {[m.content for m in messages_list]}")
-
         agent_llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, temperature=0.7, max_retries=3)
         graph = agent_llm
 
@@ -239,8 +237,6 @@ async def get_agent_graph(
             "final_agent_name": "Generalist",
             "final_agent_id": None,
         }
-
-    logging.info(f"Messages going into agent: {[m.content for m in messages_list]}")
 
     messages_dict = convert_messages_to_dict(messages_list)
 

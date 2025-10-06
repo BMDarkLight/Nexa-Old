@@ -2,8 +2,8 @@ from fastapi import BackgroundTasks, Depends, APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from bson import ObjectId
 from typing import List
-
 import datetime
+import logging
 
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry, replace_chat_history_from_point
 from api.database import sessions_db, agents_db, connectors_db
@@ -13,8 +13,19 @@ from api.auth import verify_token, oauth2_scheme
 
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-
 router = APIRouter(tags=["Agent"])
+
+def agent_doc_to_model(agent_doc):
+    agent = dict(agent_doc)
+    agent["id"] = str(agent.pop("_id"))
+    if "org" in agent:
+        agent["org"] = str(agent["org"])
+    # Always ensure context is a list
+    if "context" not in agent or agent["context"] is None:
+        agent["context"] = []
+    elif not isinstance(agent["context"], list):
+        agent["context"] = list(agent["context"]) if agent["context"] else []
+    return agent
 
 @router.post("/ask")
 async def ask(
@@ -22,10 +33,15 @@ async def ask(
     background_tasks: BackgroundTasks,
     token: str = Depends(oauth2_scheme)
 ):
+    logger = logging.getLogger("api.routes.agents.ask")
+    
     try:
         user = verify_token(token)
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception as e:
+        logger.exception("Token verification failed")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
     if not query.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
@@ -46,6 +62,11 @@ async def ask(
             raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
         agent_id_to_use = str(agent_oid)
 
+        connectors = agent_doc.get("connector_ids") or []
+        context = agent_doc.get("context") or []
+        if not connectors and not context:
+            logger.info(f"Agent {agent_id_to_use} has no connectors or context, using default RAG-free response")
+
     import uuid
     session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})
@@ -61,18 +82,18 @@ async def ask(
             chat_history=chat_history,
             agent_id=agent_id_to_use
         )
-    except Exception:
+    except Exception as e:
+        logger.exception("Exception in get_agent_graph")
         async def error_response():
-            yield "Sorry, there was an error processing your request. Please try again later."
-        return StreamingResponse(error_response(), media_type="text/plain")
+            yield f"Error while generating agent graph: {str(e)}"
+        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
 
-    graph = agent_graph["graph"]
-    agent_name = agent_graph["final_agent_name"]
-    agent_id_str = agent_graph["final_agent_id"]
+    graph = agent_graph.get("graph")
+    agent_name = agent_graph.get("final_agent_name", "Unknown Agent")
+    agent_id_str = agent_graph.get("final_agent_id", agent_id_to_use or "")
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-
         full_answer = ""
         astream_input = []
         astream_input.append(SystemMessage(
@@ -84,32 +105,26 @@ async def ask(
             astream_input.append(HumanMessage(content=entry["user"]))
             astream_input.append(AIMessage(content=entry["assistant"]))
         astream_input.append(HumanMessage(content=query.query))
-
-        async for chunk in graph.astream(astream_input):
-            content = ""
-
-            # Case 1: AIMessage object
-            if hasattr(chunk, "content"):
-                content = chunk.content or ""
-
-            # Case 2: LangGraph agent dict
-            elif isinstance(chunk, dict):
-                try:
-                    agent_messages = chunk.get("agent", {}).get("messages", [])
-                    if agent_messages:
-                        last_msg = agent_messages[-1]
-                        content = getattr(last_msg, "content", str(last_msg))
-                except Exception:
-                    content = str(chunk)
-
-            # Fallback
+        try:
+            if graph:
+                async for chunk in graph.astream(astream_input):
+                    content = ""
+                    if hasattr(chunk, "content"):
+                        content = chunk.content or ""
+                    elif isinstance(chunk, dict):
+                        content = str(chunk.get("content", chunk))
+                    else:
+                        content = str(chunk)
+                    full_answer += content
+                    yield content
             else:
-                content = str(chunk)
-
-            full_answer += content
-            yield content
-
-        # Save to DB
+                full_answer = f"[Default Agent Response] You asked: {query.query}"
+                yield full_answer
+        except Exception as e:
+            logger.exception("Exception during streaming agent response")
+            yield f"\n[Error while streaming response: {str(e)}]\n"
+            return
+        
         background_tasks.add_task(
             save_chat_history,
             session_id=session_id,
@@ -130,10 +145,15 @@ async def regenerate(
     request: Request,
     token: str = Depends(oauth2_scheme)
 ):
-    data = await request.json()
-    session_id = data.get("session_id")
-    agent_id = data.get("agent_id")
-    user = verify_token(token)
+    logger = logging.getLogger("api.routes.agents.regenerate")
+    try:
+        data = await request.json()
+        session_id = data.get("session_id")
+        agent_id = data.get("agent_id")
+        user = verify_token(token)
+    except Exception as e:
+        logger.exception("Failed to parse request or verify token")
+        raise HTTPException(status_code=400, detail="Invalid request or authentication.")
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
@@ -148,6 +168,18 @@ async def regenerate(
     original_query = chat_history[message_num]['user']
     org_id = user.get("organization")
 
+    agent_doc = None
+    if agent_id:
+        if ObjectId.is_valid(agent_id):
+            agent_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
+    if agent_doc is not None:
+        connectors = agent_doc.get("connector_ids") or []
+        context = agent_doc.get("context") or []
+        if not connectors and not context:
+            async def no_data_response():
+                yield "This agent has no connectors or context and cannot answer questions."
+            return StreamingResponse(no_data_response(), media_type="text/plain")
+
     try:
         agent_graph = await get_agent_graph(
             question=original_query,
@@ -155,7 +187,15 @@ async def regenerate(
             chat_history=truncated_history,
             agent_id=agent_id
         )
-    except Exception:
+        if agent_graph.get("agent_doc"):
+            connectors = agent_graph["agent_doc"].get("connector_ids") or []
+            context = agent_graph["agent_doc"].get("context") or []
+            if not connectors and not context:
+                async def no_data_response():
+                    yield "This agent has no connectors or context and cannot answer questions."
+                return StreamingResponse(no_data_response(), media_type="text/plain")
+    except Exception as e:
+        logger.exception("Exception in /ask/regenerate endpoint")
         async def error_response():
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain")
@@ -166,9 +206,7 @@ async def regenerate(
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-
         full_answer = ""
-        # Build list of BaseMessage objects for astream
         astream_input = []
         astream_input.append(SystemMessage(
             content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
@@ -177,15 +215,19 @@ async def regenerate(
             astream_input.append(HumanMessage(content=entry["user"]))
             astream_input.append(AIMessage(content=entry["assistant"]))
         astream_input.append(HumanMessage(content=original_query))
-        async for chunk in graph.astream(astream_input):
-            content = getattr(chunk, "content", None)
-            if content is None and isinstance(chunk, dict):
-                content = chunk.get("content", "")
-            elif content is None:
-                content = str(chunk)
-            full_answer += content
-            yield content
-
+        try:
+            async for chunk in graph.astream(astream_input):
+                content = getattr(chunk, "content", None)
+                if content is None and isinstance(chunk, dict):
+                    content = chunk.get("content", "")
+                elif content is None:
+                    content = str(chunk)
+                full_answer += content
+                yield content
+        except Exception as e:
+            logger.exception("Exception during streaming agent response (regenerate)")
+            yield "\n[Error: An error occurred while generating the response.]\n"
+            return
         background_tasks.add_task(
             replace_chat_history_from_point,
             session_id=session_id,
@@ -196,7 +238,6 @@ async def regenerate(
             agent_id=agent_id_str,
             agent_name=agent_name
         )
-
     return StreamingResponse(response_generator(), media_type="text/plain")
 
 @router.post("/ask/edit/{message_num}")
@@ -206,11 +247,16 @@ async def edit_message(
     request: Request,
     token: str = Depends(oauth2_scheme)
 ):
-    data = await request.json()
-    query = data.get("query")
-    session_id = data.get("session_id")
-    agent_id = data.get("agent_id")
-    user = verify_token(token)
+    logger = logging.getLogger("api.routes.agents.edit_message")
+    try:
+        data = await request.json()
+        query = data.get("query")
+        session_id = data.get("session_id")
+        agent_id = data.get("agent_id")
+        user = verify_token(token)
+    except Exception as e:
+        logger.exception("Failed to parse request or verify token")
+        raise HTTPException(status_code=400, detail="Invalid request or authentication.")
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
@@ -227,6 +273,18 @@ async def edit_message(
     truncated_history = chat_history[:message_num]
     org_id = user.get("organization")
 
+    agent_doc = None
+    if agent_id:
+        if ObjectId.is_valid(agent_id):
+            agent_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
+    if agent_doc is not None:
+        connectors = agent_doc.get("connector_ids") or []
+        context = agent_doc.get("context") or []
+        if not connectors and not context:
+            async def no_data_response():
+                yield "This agent has no connectors or context and cannot answer questions."
+            return StreamingResponse(no_data_response(), media_type="text/plain")
+
     try:
         agent_graph = await get_agent_graph(
             question=query,
@@ -234,7 +292,15 @@ async def edit_message(
             chat_history=truncated_history,
             agent_id=agent_id
         )
-    except Exception:
+        if agent_graph.get("agent_doc"):
+            connectors = agent_graph["agent_doc"].get("connector_ids") or []
+            context = agent_graph["agent_doc"].get("context") or []
+            if not connectors and not context:
+                async def no_data_response():
+                    yield "This agent has no connectors or context and cannot answer questions."
+                return StreamingResponse(no_data_response(), media_type="text/plain")
+    except Exception as e:
+        logger.exception("Exception in /ask/edit endpoint")
         async def error_response():
             yield "Sorry, there was an error processing your request. Please try again later."
         return StreamingResponse(error_response(), media_type="text/plain")
@@ -245,7 +311,6 @@ async def edit_message(
 
     async def response_generator():
         yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-
         full_answer = ""
         astream_input = []
         astream_input.append(SystemMessage(
@@ -255,15 +320,19 @@ async def edit_message(
             astream_input.append(HumanMessage(content=entry["user"]))
             astream_input.append(AIMessage(content=entry["assistant"]))
         astream_input.append(HumanMessage(content=query))
-        async for chunk in graph.astream(astream_input):
-            content = getattr(chunk, "content", None)
-            if content is None and isinstance(chunk, dict):
-                content = chunk.get("content", "")
-            elif content is None:
-                content = str(chunk)
-            full_answer += content
-            yield content
-
+        try:
+            async for chunk in graph.astream(astream_input):
+                content = getattr(chunk, "content", None)
+                if content is None and isinstance(chunk, dict):
+                    content = chunk.get("content", "")
+                elif content is None:
+                    content = str(chunk)
+                full_answer += content
+                yield content
+        except Exception as e:
+            logger.exception("Exception during streaming agent response (edit)")
+            yield "\n[Error: An error occurred while generating the response.]\n"
+            return
         background_tasks.add_task(
             update_chat_history_entry,
             session_id=session_id,
@@ -271,7 +340,6 @@ async def edit_message(
             new_query=query,
             new_answer=full_answer
         )
-
     return StreamingResponse(response_generator(), media_type="text/plain")
 
 @router.get("/agents", response_model=List[Agent])
@@ -279,13 +347,11 @@ def list_agents(token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
     if not user.get("organization"):
         return []
-    
     agents_cursor = agents_db.find({"org": ObjectId(user["organization"])})
     agents_list = []
     for agent in agents_cursor:
-        if "context" not in agent or agent["context"] is None:
-            agent["context"] = []
-        agents_list.append(Agent(**agent))
+        agent_model = agent_doc_to_model(agent)
+        agents_list.append(Agent(**agent_model))
     return agents_list
 
 
@@ -302,94 +368,75 @@ def create_agent(agent: AgentCreate, token: str = Depends(oauth2_scheme)):
             if not connectors_db.find_one({"_id": c_id, "org": org_id}):
                 raise HTTPException(status_code=404, detail=f"Connector with ID {c_id} not found in your organization.")
 
-    agent_data = agent.model_dump(by_alias=True, exclude={"id"}) 
-    
+    agent_data = agent.model_dump(by_alias=True, exclude={"id"})
     agent_data["org"] = org_id
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     agent_data["created_at"] = now
     agent_data["updated_at"] = now
 
     result = agents_db.insert_one(agent_data)
-    
     created_agent = agents_db.find_one({"_id": result.inserted_id})
     if not created_agent:
         raise HTTPException(status_code=500, detail="Failed to create and retrieve the agent.")
-        
-    return Agent(**created_agent)
+    agent_model = agent_doc_to_model(created_agent)
+    return Agent(**agent_model)
 
 
 @router.get("/agents/{agent_id}", response_model=Agent)
 def get_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
-    
     if not ObjectId.is_valid(agent_id):
         raise HTTPException(status_code=400, detail="Invalid agent ID format.")
-    
     agent = agents_db.find_one({
-        "_id": ObjectId(agent_id), 
+        "_id": ObjectId(agent_id),
         "org": ObjectId(user["organization"])
     })
-
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to view it.")
-    
-    return Agent(**agent)
+    agent_model = agent_doc_to_model(agent)
+    return Agent(**agent_model)
 
 
 @router.put("/agents/{agent_id}", response_model=Agent)
 def update_agent(agent_id: str, agent_update: AgentUpdate, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
     org_id = ObjectId(user["organization"])
-    
     if user.get("permission") != "orgadmin":
         raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can update agents.")
-
     if not ObjectId.is_valid(agent_id):
         raise HTTPException(status_code=400, detail="Invalid agent ID format.")
-
     if not agents_db.find_one({"_id": ObjectId(agent_id), "org": org_id}):
         raise HTTPException(status_code=404, detail="Agent not found.")
-    
     update_data = agent_update.model_dump(exclude_unset=True, exclude_none=True)
-
     if "connector_ids" in update_data and update_data["connector_ids"] is not None:
         for c_id in update_data["connector_ids"]:
             if not connectors_db.find_one({"_id": c_id, "org": org_id}):
                 raise HTTPException(status_code=404, detail=f"Connector with ID {c_id} not found in your organization.")
-    
     for field in ["id", "_id", "org", "created_at"]:
         update_data.pop(field, None)
-
     if not update_data:
         raise HTTPException(status_code=400, detail="No valid update data provided.")
-
     update_data["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
     agents_db.update_one(
         {"_id": ObjectId(agent_id)},
         {"$set": update_data}
     )
-
     updated_agent = agents_db.find_one({"_id": ObjectId(agent_id)})
-    return Agent(**updated_agent)
+    agent_model = agent_doc_to_model(updated_agent)
+    return Agent(**agent_model)
 
 
 @router.delete("/agents/{agent_id}")
 def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
-    
     if user.get("permission") != "orgadmin":
         raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can delete agents.")
-
     if not ObjectId.is_valid(agent_id):
         raise HTTPException(status_code=400, detail="Invalid agent ID format.")
-    
     result = agents_db.delete_one({
-        "_id": ObjectId(agent_id), 
+        "_id": ObjectId(agent_id),
         "org": ObjectId(user["organization"])
     })
-
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
-    
     return {"message": f"Agent '{agent_id}' deleted successfully."}
