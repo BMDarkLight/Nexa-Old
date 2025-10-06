@@ -70,9 +70,9 @@ const Features = () => {
         {features.map((feature) => (
           <div
             key={feature.title}
-            className="flex flex-col bg-background border rounded-xl py-4 px-4"
+            className="flex flex-col bg-background border rounded-xl py-6 px-5"
           >
-            <div className="mb-2 h-8 w-8 flex items-center justify-center bg-accent rounded-md p-1">
+            <div className="mb-3 h-10 w-10 flex items-center justify-center bg-accent rounded-md p-1">
               <feature.icon className={`h-6 w-6 ${feature.iconColor}`} />
             </div>
             <span className="text-lg font-semibold">{feature.title}</span>

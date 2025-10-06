@@ -23,10 +23,12 @@ interface ILoginResponse {
   detail?: string;
 }
 
-const API_Base_Url: string =
+const API_Base_Url =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point: string = "/signin";
 const API_PORT: string = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
+const UI_PORT: string = process.env.NEXT_PUBLIC_UI_PORT ?? "8000";
+console.log(UI_PORT);
 
 const schema = Yup.object({
   username: Yup.string().required("لطفا نام کاربری وارد کنید"),
@@ -35,13 +37,12 @@ const schema = Yup.object({
     .min(8, "رمز عبور باید حداقل 8 کاراکتر باشد")
     .matches(
       /^(?=.*[a-zA-Z])(?=.*\d)[a-zA-Z\d]{8,}$/,
-      "رمز عبور باید شامل حروف انگلیسی و حداقل یک عدد باشد (بدون علائم)"
+      "رمز عبور باید حداقل ۸ کاراکتر و حاوی اعداد و حروف انگلیسی باشد."
     ),
 });
 
 export default function ValidateInputs() {
   const router = useRouter();
-  const [showPassword, setShowPassword] = useState<boolean>(false);
 
   const {
     register,
@@ -166,7 +167,7 @@ export default function ValidateInputs() {
             <div className="relative">
               <Input
                 id="password"
-                type={showPassword ? "text" : "password"}
+                type="password"
                 {...register("password")}
               />
             </div>

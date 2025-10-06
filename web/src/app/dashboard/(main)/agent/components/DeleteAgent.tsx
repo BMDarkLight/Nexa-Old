@@ -10,6 +10,7 @@ type TAgentDelete = {
 }
 const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000"
 const End_point = process.env.NEXT_PUBLICK_ENDPOINT = "/agents"
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 export default function DeleteAgent({id , onDelete} : TAgentDelete){
       const router = useRouter()
       const [show , setShow] = useState(false);
@@ -35,7 +36,7 @@ export default function DeleteAgent({id , onDelete} : TAgentDelete){
                   try{
                         const token = Cookie.get("auth_token")
                         const token_type = Cookie.get("token_type")
-                        const response = await fetch(`${API_Base_Url}${End_point}/${id}` , {
+                        const response = await fetch(`${API_Base_Url}:${API_PORT}${End_point}/${id}` , {
                               method: "DELETE" , 
                               headers:{
                                     Authorization: `${token_type} ${token}`
@@ -62,8 +63,6 @@ export default function DeleteAgent({id , onDelete} : TAgentDelete){
                                     <Trash2 size={16} />
                               </div>
                         </div>
-            
-            
             </>
       )
 }

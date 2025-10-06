@@ -18,7 +18,7 @@ import ToastProvider from "@/components/ToasterProvider";
 const myFont = localFont({
   src: [
     {
-      path: '../../public/fonts/IRANYekanX-Regular.woff2',
+      path: '../../public/fonts/IRANYekanXFaNum-Regular.woff2',
       weight: '400',
       style: 'normal',
     }

@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { ArrowUpRight, CirclePlay } from "lucide-react";
 import React from "react";
 import LogoCloud from "./logo-cloud";
-
 const Hero = () => {
   return (
     <div className="min-h-[calc(100vh-6rem)] flex flex-col items-center py-20 px-6">

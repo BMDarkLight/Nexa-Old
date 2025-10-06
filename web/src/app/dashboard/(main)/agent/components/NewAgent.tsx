@@ -1,85 +1,65 @@
 "use client";
-import React, { useEffect, useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
-import Cookie from "js-cookie";
-import { Badge } from "@/components/ui/badge";
-import { useRouter } from "next/navigation";
-import { Switch } from "@/components/ui/switch";
+import React, { useState } from "react";
 import ReturnBtn from "./ReturnBtn";
+import { Button } from "@/components/ui/button";
+import { Check } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useAgent } from "@/app/dashboard/context/AgentsContext";
+import { useRouter } from "next/navigation";
+import Cookie from "js-cookie";
 import { toast } from "sonner";
 
-interface Connector {
-  _id: string;
-  name: string;
-  connector_type: string;
-  settings: Record<string, unknown>;
-  org: string;
-}
-
-const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_Base_Url =
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+const End_point = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
-export default function NewAgent() {
-  const [connectors, setConnectors] = useState<Connector[]>([]);
+export default function NameAgentCom() {
+  const { agent, setField } = useAgent();
   const router = useRouter();
-  const { agent, toggleConnector } = useAgent();
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    const fetchConnectors = async () => {
-      const token = Cookie.get("auth_token");
-      const tokenType = Cookie.get("token_type") ?? "Bearer";
+  const handleSave = async () => {
+    const token = Cookie.get("auth_token");
+    const tokenType = Cookie.get("token_type") ?? "Bearer";
 
-      if (!token) {
-        alert("ابتدا وارد حساب کاربری خود شوید");
+    if (!token) {
+      alert("ابتدا وارد حساب کاربری خود شوید");
+      router.push("/login");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const payload = {
+        name: agent.name,
+        description: agent.description ?? "",
+        model: "gpt-3.5-turbo",
+        temperature: 0.7,
+        tools: [],
+        connector_ids: [],
+        context: [],
+      };
+
+      const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point}`, {
+        method: "POST",
+        headers: {
+          Authorization: `${tokenType} ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.status === 401) {
+        alert("مدت زمان ماندن شما منقضی شده است. لطفاً دوباره وارد شوید");
         router.push("/login");
         return;
       }
 
-      try {
-        const res = await fetch(`${API_Base_Url}:${API_PORT}/connectors`, {
-          method: "GET",
-          headers: {
-            Authorization: `${tokenType} ${token}`,
-            "Content-Type": "application/json",
-          },
-        });
-
-        if (res.status === 401) {
-          alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
-          router.push("/login");
-          return;
-        }
-
-        if (!res.ok) {
-          toast.error("ارتباط با سرور برقرار نشد.", {
-            icon: null,
-            style: {
-              background: "#DC2626",
-              color: "#fff",
-            },
-            duration: 2000,
-          });
-          return;
-        }
-
-        const data: Connector[] = await res.json();
-
-        const connectedConnectors = data.filter(
-          (connector) => Object.keys(connector.settings || {}).length > 0
-        );
-
-        setConnectors(connectedConnectors);
-      } catch {
-        toast.error("ارتباط با سرور برقرار نشد.", {
+      if (!res.ok) {
+        toast.error("خطا در ایجاد ایجنت لطفا مجددا تلاش کنید.", {
           icon: null,
           style: {
             background: "#DC2626",
@@ -87,101 +67,64 @@ export default function NewAgent() {
           },
           duration: 2000,
         });
+        return;
       }
-    };
 
-    fetchConnectors();
-  }, [router]);
+      const newAgent = await res.json();
+      const agentId = newAgent._id;
 
-  const getConnectorLogo = (type: string) => {
-    switch (type) {
-      case "google_sheet":
-        return "/Squad/image/card-img.png";
-      case "google_drive":
-        return "/Squad/image/goole-drive.png";
-      default:
-        return "/Squad/image/card-img.png";
+      toast.success("ایجنت با موفقیت ساخته شد.", {
+        icon: null,
+        style: {
+          background: "#2A9D90",
+          color: "#fff",
+        },
+        duration: 2000,
+      });
+
+      router.push(`new-agent/uploadFile-agent/${agentId}`);
+    } catch {
+      toast.error("ارتباط با سرور برقرار نشد.", {
+        icon: null,
+        style: {
+          background: "#DC2626",
+          color: "#fff",
+        },
+        duration: 2000,
+      });
+    } finally {
+      setSaving(false);
     }
-  };
-
-  const getConnectionStatus = (settings: Record<string, unknown>) => {
-    return Object.keys(settings || {}).length === 0 ? "متصل نیست" : "متصل";
-  };
-
-  const getConnectorDescription = (type: string) => {
-    switch (type) {
-      case "google_sheet":
-        return "جدول‌های گوگل شیت خود را تحلیل کنید.";
-      case "google_drive":
-        return "جدول گوگل درایو خود را تحلیل کنید.";
-      default:
-        return "";
-    }
-  };
-
-  const goNextStep = () => {
-    router.push("/dashboard/agent/new-agent/name-agent");
   };
 
   return (
-    <div className="flex flex-col gap-5 lg:px-5">
-      <div className="flex justify-between mt-4 md:mt-0 items-center">
-        <h2 className="text-xl font-medium">لیست اتصالات</h2>
-      </div>
-
-      <div className="flex justify-between flex-wrap gap-5 lg:grid lg:grid-cols-3 lg:gap-2">
-        {connectors.map((connector) => (
-          <Card key={connector._id} className="w-full">
-            <div className="flex">
-              <div>
-                <picture>
-                  <img
-                    src={getConnectorLogo(connector.connector_type)}
-                    className="w-10"
-                    alt={connector.connector_type}
-                  />
-                </picture>
-              </div>
-              <div className="mr-3 w-full">
-                <CardHeader>
-                  <CardTitle className="text-sm font-semibold">
-                    {connector.name || connector.connector_type}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="text-xs">
-                  <p>{getConnectorDescription(connector.connector_type)}</p>
-                </CardContent>
-                <div className="flex justify-end mt-3">
-                  <CardFooter className="flex justify-between w-full">
-                    <Badge
-                      className={`font-bold ${
-                        getConnectionStatus(connector.settings) === "متصل"
-                          ? "bg-[#0596691A] text-[#047857]"
-                          : "bg-red-200 text-red-600"
-                      }`}
-                    >
-                      {getConnectionStatus(connector.settings)}
-                    </Badge>
-                    <Switch
-                      checked={agent.connector_ids.includes(connector._id)}
-                      onCheckedChange={() => toggleConnector(connector._id)}
-                      className="flex flex-row-reverse items-center"
-                    />
-                  </CardFooter>
-                </div>
-              </div>
-            </div>
-          </Card>
-        ))}
+    <div className="flex flex-col justify-between gap-5 lg:px-5 h-[100vh] md:h-auto">
+      <div className="flex flex-col gap-5">
+        <h2 className="text-xl font-medium mt-5 md:mt-0">
+          اطلاعات ایجنت را وارد کنید
+        </h2>
+        <div className="w-full">
+          <Label htmlFor="name-agent" className="mb-3">
+            نام ایجنت
+          </Label>
+          <Input
+            id="name-agent"
+            type="text"
+            placeholder="نام ایجنت"
+            value={agent.name}
+            onChange={(e) => setField("name", e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="flex justify-end items-center gap-3">
         <ReturnBtn />
         <Button
           className="cursor-pointer flex-1 md:flex-0"
-          onClick={goNextStep}
+          onClick={handleSave}
+          disabled={saving}
         >
-          مرحله بعد <ArrowLeft />
+          {saving ? "مرحله بعد..." : "مرحله بعد"}
         </Button>
       </div>
     </div>

@@ -40,6 +40,7 @@ export default function StartChat() {
   const End_point_agents = "/agents";
   const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
+  // === گرفتن توکن ===
   useEffect(() => {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
@@ -49,38 +50,49 @@ export default function StartChat() {
       return;
     }
     setAuthHeader(`${tokenType} ${token}`);
+    console.log("[AUTH] Header set:", `${tokenType} ${token.substring(0, 10)}...`);
   }, [router]);
 
+  // === گرفتن لیست ایجنت‌ها ===
   useEffect(() => {
     if (!authHeader) return;
     const fetchAgents = async () => {
+      const fullUrl = `${API_Base_Url}:${API_PORT}${End_point_agents}`;
+      console.log("[FETCH AGENTS] URL:", fullUrl);
+
       try {
-        const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point_agents}`, {
+        const res = await fetch(fullUrl, {
           headers: {
             Authorization: authHeader,
             "Content-Type": "application/json",
           },
         });
 
+        console.log("[FETCH AGENTS] Status:", res.status);
+
         if (res.status === 401) {
+          console.warn("[FETCH AGENTS] 401 Unauthorized");
           alert("مدت زمان نشست شما منقضی شده است. لطفاً دوباره وارد شوید");
           router.push("/login");
           return;
         }
 
         if (!res.ok) {
-          
+          console.error("[FETCH AGENTS] Failed response:", await res.text());
           return;
         }
+
         const data: Agent[] = await res.json();
+        console.log("[FETCH AGENTS] Success:", data);
         setAgents(data);
-      } catch {
-        
+      } catch (error) {
+        console.error("[FETCH AGENTS] Error:", error);
       }
     };
     fetchAgents();
   }, [authHeader, router]);
 
+  // === ارسال پیام ===
   const handleSend = async () => {
     if (!query || !authHeader) {
       alert("لطفاً یک پیام وارد کنید");
@@ -88,12 +100,16 @@ export default function StartChat() {
     }
 
     setIsSending(true);
-    try {
-      const sessionId = Math.random().toString(36).substring(2, 18);
-      const body: any = { query, session_id: sessionId };
-      if (selectedAgent) body.agent_id = selectedAgent;
+    const fullUrl = `${API_Base_Url}:${API_PORT}${End_point_ask}`;
+    const sessionId = Math.random().toString(36).substring(2, 18);
+    const body: any = { query, session_id: sessionId };
+    if (selectedAgent) body.agent_id = selectedAgent;
 
-      const res = await fetch(`${API_Base_Url}:${API_PORT}${End_point_ask}`, {
+    console.log("[SEND MESSAGE] URL:", fullUrl);
+    console.log("[SEND MESSAGE] Body:", body);
+
+    try {
+      const res = await fetch(fullUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -102,14 +118,20 @@ export default function StartChat() {
         body: JSON.stringify(body),
       });
 
+      console.log("[SEND MESSAGE] Status:", res.status);
+      console.log("[SEND MESSAGE] Headers:", Object.fromEntries(res.headers.entries()));
+
       if (res.status === 401) {
+        console.warn("[SEND MESSAGE] 401 Unauthorized");
         alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
         router.push("/login");
         return;
       }
 
       if (!res.ok) {
-        alert("خطا در ارسال پرسش");
+        const errorText = await res.json();
+        console.error("[SEND MESSAGE] Failed:", errorText.detail);
+        alert(`خطا در ارسال پرسش: ${errorText.detail}`);
         return;
       }
 
@@ -120,18 +142,24 @@ export default function StartChat() {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            decoder.decode(value, { stream: true });
+            const chunk = decoder.decode(value, { stream: true });
+            console.log("[STREAM CHUNK]:", chunk);
           }
         } else {
-          await res.clone().text();
+          const text = await res.json();
+          console.log("[NON-STREAM RESPONSE]:", text.detail);
         }
-      } catch {
-        alert("خطایی ناشناخته رخ داده است");
+      } catch (streamErr) {
+        console.error("[STREAM ERROR]:", streamErr);
+        alert("خطایی ناشناخته در خواندن پاسخ رخ داده است");
       }
 
       const responseSessionId = res.headers.get("X-Session-Id") || sessionId;
+      console.log("[SESSION ID]:", responseSessionId);
+
       router.push(`/dashboard/chatbot/${responseSessionId}`);
-    } catch {
+    } catch (err) {
+      console.error("[SEND MESSAGE] Network/Unhandled Error:", err);
       alert("خطا در ارسال پرسش. لطفاً دوباره تلاش کنید");
     } finally {
       setIsSending(false);

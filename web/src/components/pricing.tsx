@@ -23,7 +23,8 @@ const YEARLY_DISCOUNT = 20;
 const plans = [
   {
     name: "شروع‌کننده",
-    price: "1,800,000 تومان ",
+    price: 1800000,
+    priceName: " تومان" ,
     monthly: "/ماهانه" ,
     description:
       "مناسب برای کسب‌وکارهای کوچک و شروع‌کننده",
@@ -36,7 +37,8 @@ const plans = [
   },
   {
     name: "حرفه‌ای",
-    price: "4,200,000 تومان ",
+    price: 4200000,
+     priceName: " تومان" ,
     monthly: "/ماهانه" ,
     isRecommended: true,
     description:
@@ -63,6 +65,20 @@ const plans = [
 const Pricing = () => {
   const [selectedBillingPeriod, setSelectedBillingPeriod] = useState("monthly");
 
+  const formatPrice = (price : number | string): string=>{
+    if(typeof price !== "number") return price  ;
+    return price.toLocaleString("fa-IR");
+  }
+
+  const getDisplayPrice = (price: number | string): string=>{
+    if(typeof price !== "number") return price ;
+    if(selectedBillingPeriod === "yearly") {
+      const discount = price * ((100 - YEARLY_DISCOUNT) / 100)
+      return formatPrice(discount)
+    }
+    return formatPrice(price);
+  }
+
   return (
     <div
       id="pricing"
@@ -71,23 +87,20 @@ const Pricing = () => {
       <h1 className="text-3xl xs:text-4xl md:text-5xl font-bold text-center tracking-tight">
         قیمت‌گذاری
       </h1>
-      <div className="mt-5 font-medium">
-        <p className="text-[#585858] text-lg">ماهانه - سالانه (۲۰ درصد تخفیف)</p>
-      </div>
-      {/* <Tabs
+      <Tabs
         value={selectedBillingPeriod}
         onValueChange={setSelectedBillingPeriod}
         className="mt-8"
       >
         <TabsList className="h-11 px-1.5 rounded-full bg-primary/5">
           <TabsTrigger value="monthly" className="py-1.5 rounded-full">
-            Monthly
+            ماهانه
           </TabsTrigger>
           <TabsTrigger value="yearly" className="py-1.5 rounded-full">
-            Yearly (Save {YEARLY_DISCOUNT}%)
+            سالانه ({YEARLY_DISCOUNT.toLocaleString("fa-IR")}%)
           </TabsTrigger>
         </TabsList>
-      </Tabs> */}
+      </Tabs>
       <div className="mt-12 max-w-screen-lg mx-auto grid grid-cols-1 lg:grid-cols-3 items-center gap-8">
         {plans.map((plan) => (
           <div
@@ -103,8 +116,9 @@ const Pricing = () => {
             )}
             <h3 className="text-base font-bold">{plan.name}</h3>
             <p className="mt-2 text-lg font-bold text-primary">
-              
-              {plan.price} 
+
+              {getDisplayPrice(plan.price)}
+                {plan.priceName}
               <span className="ml-1.5 text-sm text-muted-foreground font-normal">
                 {plan.monthly}
               </span>
@@ -123,8 +137,8 @@ const Pricing = () => {
             {/* <Separator className="my-8" /> */}
             <ul className="space-y-2 mt-7">
               {plan.features.map((feature) => (
-                <li key={feature.title} className="flex items-start gap-1.5 text-sm text-muted-foreground">
-                  {/* <CircleCheck className="h-4 w-4 mt-1 text-green-600" /> */}
+                <li key={feature.title} className="flex items-center justify-start gap-1.5 text-sm text-muted-foreground">
+                  <CircleCheck className="h-4 w-4 text-green-600" />
                   {feature.title}
                   {/* {feature.tooltip && (
                     <Tooltip>
