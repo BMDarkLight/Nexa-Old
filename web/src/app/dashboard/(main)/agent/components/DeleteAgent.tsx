@@ -8,7 +8,7 @@ type TAgentDelete = {
       id : string
       onDelete : (id : string)=> void
 }
-const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000"
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4"
 const End_point = process.env.NEXT_PUBLICK_ENDPOINT = "/agents"
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 export default function DeleteAgent({id , onDelete} : TAgentDelete){

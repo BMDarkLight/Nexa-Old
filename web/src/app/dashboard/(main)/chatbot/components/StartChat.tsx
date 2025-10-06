@@ -35,12 +35,11 @@ export default function StartChat() {
   const router = useRouter();
 
   const API_Base_Url =
-    process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+    process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
   const End_point_ask = "/ask";
   const End_point_agents = "/agents";
   const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
-  // === گرفتن توکن ===
   useEffect(() => {
     const token = Cookie.get("auth_token");
     const tokenType = Cookie.get("token_type") ?? "Bearer";
@@ -53,7 +52,6 @@ export default function StartChat() {
     console.log("[AUTH] Header set:", `${tokenType} ${token.substring(0, 10)}...`);
   }, [router]);
 
-  // === گرفتن لیست ایجنت‌ها ===
   useEffect(() => {
     if (!authHeader) return;
     const fetchAgents = async () => {
@@ -92,7 +90,6 @@ export default function StartChat() {
     fetchAgents();
   }, [authHeader, router]);
 
-  // === ارسال پیام ===
   const handleSend = async () => {
     if (!query || !authHeader) {
       alert("لطفاً یک پیام وارد کنید");

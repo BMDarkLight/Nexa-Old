@@ -11,7 +11,7 @@ import Cookie from "js-cookie";
 import { toast } from "sonner";
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
