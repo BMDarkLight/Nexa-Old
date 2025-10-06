@@ -281,7 +281,12 @@ def list_agents(token: str = Depends(oauth2_scheme)):
         return []
     
     agents_cursor = agents_db.find({"org": ObjectId(user["organization"])})
-    return [Agent(**agent) for agent in agents_cursor]
+    agents_list = []
+    for agent in agents_cursor:
+        if "context" not in agent or agent["context"] is None:
+            agent["context"] = []
+        agents_list.append(Agent(**agent))
+    return agents_list
 
 
 @router.post("/agents", response_model=Agent)
