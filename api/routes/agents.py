@@ -34,22 +34,26 @@ async def ask(
     token: str = Depends(oauth2_scheme)
 ):
     logger = logging.getLogger("api.routes.agents.ask")
-    
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
-    except Exception as e:
-        logger.exception("Token verification failed")
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
     if not query.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.exception("Token verification failed")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
     if not user.get("organization") and user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="You do not belong to an organization.")
 
     agent_id_to_use = None
+    connectors = []
+    context = []
+    agent_doc = None
+
     if query.agent_id:
         if not ObjectId.is_valid(query.agent_id):
             raise HTTPException(status_code=400, detail="Invalid agent ID format.")
@@ -61,11 +65,8 @@ async def ask(
         if not agent_doc:
             raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
         agent_id_to_use = str(agent_oid)
-
         connectors = agent_doc.get("connector_ids") or []
         context = agent_doc.get("context") or []
-        if not connectors and not context:
-            logger.info(f"Agent {agent_id_to_use} has no connectors or context, using default RAG-free response")
 
     import uuid
     session_id = query.session_id or str(uuid.uuid4())
@@ -84,57 +85,62 @@ async def ask(
         )
     except Exception as e:
         logger.exception("Exception in get_agent_graph")
-        async def error_response():
-            yield f"Error while generating agent graph: {str(e)}"
-        return StreamingResponse(error_response(), media_type="text/plain; charset=utf-8")
+        async def error_response(exc_msg):
+            yield f"Error while generating agent graph: {exc_msg}"
+        return StreamingResponse(error_response(str(e)), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph.get("graph")
     agent_name = agent_graph.get("final_agent_name", "Unknown Agent")
     agent_id_str = agent_graph.get("final_agent_id", agent_id_to_use or "")
 
     async def response_generator():
-        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-        full_answer = ""
-        astream_input = []
-        astream_input.append(SystemMessage(
-            content=f"You are an AI agent built by user in Nexa AI platform. "
-                    f"You are now operating as the agent named {agent_name}. "
-                    f"Description: {agent_graph.get('description', 'No description provided')}."
-        ))
-        for entry in chat_history:
-            astream_input.append(HumanMessage(content=entry["user"]))
-            astream_input.append(AIMessage(content=entry["assistant"]))
-        astream_input.append(HumanMessage(content=query.query))
         try:
+            full_answer = ""
+            astream_input = []
+
+            astream_input.append(SystemMessage(
+                content=f"You are an AI agent built by user in Nexa AI platform. "
+                        f"Operating as the agent named {agent_name}. "
+                        f"Description: {agent_graph.get('description', 'No description provided')}."
+            ))
+
+            for entry in chat_history:
+                astream_input.append(HumanMessage(content=entry["user"]))
+                astream_input.append(AIMessage(content=entry["assistant"]))
+
+            astream_input.append(HumanMessage(content=query.query))
+
             if graph:
-                async for chunk in graph.astream(astream_input):
-                    content = ""
-                    if hasattr(chunk, "content"):
-                        content = chunk.content or ""
-                    elif isinstance(chunk, dict):
-                        content = str(chunk.get("content", chunk))
-                    else:
-                        content = str(chunk)
-                    full_answer += content
-                    yield content
+                try:
+                    async for chunk in graph.astream(astream_input):
+                        content = getattr(chunk, "content", None)
+                        if content is None and isinstance(chunk, dict):
+                            content = chunk.get("content", "")
+                        elif content is None:
+                            content = str(chunk)
+                        full_answer += content
+                        yield content
+                except Exception as exc:
+                    logger.exception("Exception during streaming agent response")
+                    yield f"\n[Error while streaming response: {str(exc)}]\n"
+                    return
             else:
                 full_answer = f"[Default Agent Response] You asked: {query.query}"
                 yield full_answer
-        except Exception as e:
-            logger.exception("Exception during streaming agent response")
-            yield f"\n[Error while streaming response: {str(e)}]\n"
-            return
-        
-        background_tasks.add_task(
-            save_chat_history,
-            session_id=session_id,
-            user_id=str(user["_id"]),
-            chat_history=chat_history,
-            query=query.query,
-            answer=full_answer,
-            agent_id=agent_id_str,
-            agent_name=agent_name
-        )
+
+            background_tasks.add_task(
+                save_chat_history,
+                session_id=session_id,
+                user_id=str(user["_id"]),
+                chat_history=chat_history,
+                query=query.query,
+                answer=full_answer,
+                agent_id=agent_id_str,
+                agent_name=agent_name
+            )
+        except Exception as exc:
+            logger.exception("Exception in response_generator")
+            yield f"\n[Internal error: {str(exc)}]\n"
 
     return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
@@ -172,13 +178,6 @@ async def regenerate(
     if agent_id:
         if ObjectId.is_valid(agent_id):
             agent_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
-    if agent_doc is not None:
-        connectors = agent_doc.get("connector_ids") or []
-        context = agent_doc.get("context") or []
-        if not connectors and not context:
-            async def no_data_response():
-                yield "This agent has no connectors or context and cannot answer questions."
-            return StreamingResponse(no_data_response(), media_type="text/plain")
 
     try:
         agent_graph = await get_agent_graph(
@@ -187,57 +186,57 @@ async def regenerate(
             chat_history=truncated_history,
             agent_id=agent_id
         )
-        if agent_graph.get("agent_doc"):
-            connectors = agent_graph["agent_doc"].get("connector_ids") or []
-            context = agent_graph["agent_doc"].get("context") or []
-            if not connectors and not context:
-                async def no_data_response():
-                    yield "This agent has no connectors or context and cannot answer questions."
-                return StreamingResponse(no_data_response(), media_type="text/plain")
     except Exception as e:
         logger.exception("Exception in /ask/regenerate endpoint")
-        async def error_response():
-            yield "Sorry, there was an error processing your request. Please try again later."
-        return StreamingResponse(error_response(), media_type="text/plain")
+        async def error_response(exc_msg):
+            yield f"Sorry, there was an error processing your request. Please try again later. Details: {exc_msg}"
+        return StreamingResponse(error_response(str(e)), media_type="text/plain")
 
-    graph = agent_graph["graph"]
-    agent_name = agent_graph["final_agent_name"]
-    agent_id_str = agent_graph["final_agent_id"]
+    graph = agent_graph.get("graph")
+    agent_name = agent_graph.get("final_agent_name", "Unknown Agent")
+    agent_id_str = agent_graph.get("final_agent_id", agent_id or "")
 
     async def response_generator():
-        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-        full_answer = ""
-        astream_input = []
-        astream_input.append(SystemMessage(
-            content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-        ))
-        for entry in truncated_history:
-            astream_input.append(HumanMessage(content=entry["user"]))
-            astream_input.append(AIMessage(content=entry["assistant"]))
-        astream_input.append(HumanMessage(content=original_query))
         try:
-            async for chunk in graph.astream(astream_input):
-                content = getattr(chunk, "content", None)
-                if content is None and isinstance(chunk, dict):
-                    content = chunk.get("content", "")
-                elif content is None:
-                    content = str(chunk)
-                full_answer += content
-                yield content
-        except Exception as e:
-            logger.exception("Exception during streaming agent response (regenerate)")
-            yield "\n[Error: An error occurred while generating the response.]\n"
-            return
-        background_tasks.add_task(
-            replace_chat_history_from_point,
-            session_id=session_id,
-            user_id=str(user["_id"]),
-            truncated_history=truncated_history,
-            query=original_query,
-            new_answer=full_answer,
-            agent_id=agent_id_str,
-            agent_name=agent_name
-        )
+            full_answer = ""
+            astream_input = []
+            astream_input.append(SystemMessage(
+                content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+            ))
+            for entry in truncated_history:
+                astream_input.append(HumanMessage(content=entry["user"]))
+                astream_input.append(AIMessage(content=entry["assistant"]))
+            astream_input.append(HumanMessage(content=original_query))
+            if graph:
+                try:
+                    async for chunk in graph.astream(astream_input):
+                        content = getattr(chunk, "content", None)
+                        if content is None and isinstance(chunk, dict):
+                            content = chunk.get("content", "")
+                        elif content is None:
+                            content = str(chunk)
+                        full_answer += content
+                        yield content
+                except Exception as exc:
+                    logger.exception("Exception during streaming agent response (regenerate)")
+                    yield f"\n[Error: An error occurred while generating the response. Details: {str(exc)}]\n"
+                    return
+            else:
+                full_answer = f"[Default Agent Response] You asked: {original_query}"
+                yield full_answer
+            background_tasks.add_task(
+                replace_chat_history_from_point,
+                session_id=session_id,
+                user_id=str(user["_id"]),
+                truncated_history=truncated_history,
+                query=original_query,
+                new_answer=full_answer,
+                agent_id=agent_id_str,
+                agent_name=agent_name
+            )
+        except Exception as exc:
+            logger.exception("Exception in response_generator (regenerate)")
+            yield f"\n[Internal error: {str(exc)}]\n"
     return StreamingResponse(response_generator(), media_type="text/plain")
 
 @router.post("/ask/edit/{message_num}")
@@ -277,13 +276,6 @@ async def edit_message(
     if agent_id:
         if ObjectId.is_valid(agent_id):
             agent_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
-    if agent_doc is not None:
-        connectors = agent_doc.get("connector_ids") or []
-        context = agent_doc.get("context") or []
-        if not connectors and not context:
-            async def no_data_response():
-                yield "This agent has no connectors or context and cannot answer questions."
-            return StreamingResponse(no_data_response(), media_type="text/plain")
 
     try:
         agent_graph = await get_agent_graph(
@@ -292,54 +284,54 @@ async def edit_message(
             chat_history=truncated_history,
             agent_id=agent_id
         )
-        if agent_graph.get("agent_doc"):
-            connectors = agent_graph["agent_doc"].get("connector_ids") or []
-            context = agent_graph["agent_doc"].get("context") or []
-            if not connectors and not context:
-                async def no_data_response():
-                    yield "This agent has no connectors or context and cannot answer questions."
-                return StreamingResponse(no_data_response(), media_type="text/plain")
     except Exception as e:
         logger.exception("Exception in /ask/edit endpoint")
-        async def error_response():
-            yield "Sorry, there was an error processing your request. Please try again later."
-        return StreamingResponse(error_response(), media_type="text/plain")
+        async def error_response(exc_msg):
+            yield f"Sorry, there was an error processing your request. Please try again later. Details: {exc_msg}"
+        return StreamingResponse(error_response(str(e)), media_type="text/plain")
 
-    graph = agent_graph["graph"]
-    agent_name = agent_graph["final_agent_name"]
-    agent_id_str = agent_graph["final_agent_id"]
+    graph = agent_graph.get("graph")
+    agent_name = agent_graph.get("final_agent_name", "Unknown Agent")
+    agent_id_str = agent_graph.get("final_agent_id", agent_id or "")
 
     async def response_generator():
-        yield f"[Agent: {agent_name} | Session: {session_id}]\n\n"
-        full_answer = ""
-        astream_input = []
-        astream_input.append(SystemMessage(
-            content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-        ))
-        for entry in truncated_history:
-            astream_input.append(HumanMessage(content=entry["user"]))
-            astream_input.append(AIMessage(content=entry["assistant"]))
-        astream_input.append(HumanMessage(content=query))
         try:
-            async for chunk in graph.astream(astream_input):
-                content = getattr(chunk, "content", None)
-                if content is None and isinstance(chunk, dict):
-                    content = chunk.get("content", "")
-                elif content is None:
-                    content = str(chunk)
-                full_answer += content
-                yield content
-        except Exception as e:
-            logger.exception("Exception during streaming agent response (edit)")
-            yield "\n[Error: An error occurred while generating the response.]\n"
-            return
-        background_tasks.add_task(
-            update_chat_history_entry,
-            session_id=session_id,
-            message_num=message_num,
-            new_query=query,
-            new_answer=full_answer
-        )
+            full_answer = ""
+            astream_input = []
+            astream_input.append(SystemMessage(
+                content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+            ))
+            for entry in truncated_history:
+                astream_input.append(HumanMessage(content=entry["user"]))
+                astream_input.append(AIMessage(content=entry["assistant"]))
+            astream_input.append(HumanMessage(content=query))
+            if graph:
+                try:
+                    async for chunk in graph.astream(astream_input):
+                        content = getattr(chunk, "content", None)
+                        if content is None and isinstance(chunk, dict):
+                            content = chunk.get("content", "")
+                        elif content is None:
+                            content = str(chunk)
+                        full_answer += content
+                        yield content
+                except Exception as exc:
+                    logger.exception("Exception during streaming agent response (edit)")
+                    yield f"\n[Error: An error occurred while generating the response. Details: {str(exc)}]\n"
+                    return
+            else:
+                full_answer = f"[Default Agent Response] You asked: {query}"
+                yield full_answer
+            background_tasks.add_task(
+                update_chat_history_entry,
+                session_id=session_id,
+                message_num=message_num,
+                new_query=query,
+                new_answer=full_answer
+            )
+        except Exception as exc:
+            logger.exception("Exception in response_generator (edit)")
+            yield f"\n[Internal error: {str(exc)}]\n"
     return StreamingResponse(response_generator(), media_type="text/plain")
 
 @router.get("/agents", response_model=List[Agent])
