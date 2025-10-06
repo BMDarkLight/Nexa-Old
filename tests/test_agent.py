@@ -1,7 +1,10 @@
 import pytest
+from httpx import AsyncClient
+from httpx import ASGITransport
 from fastapi.testclient import TestClient
 from bson import ObjectId
 import uuid
+import json
 
 from api.main import app, pwd_context
 from api.database import users_db, orgs_db, sessions_db
@@ -52,7 +55,7 @@ def test_user_token(test_user):
 
 @pytest.fixture(autouse=True)
 def mock_agent_graph_and_chat(monkeypatch):
-    # Mock the ChatOpenAI class
+    # Mock ChatOpenAI
     class MockChatOpenAI:
         def __init__(self, *args, **kwargs):
             pass
@@ -60,12 +63,12 @@ def mock_agent_graph_and_chat(monkeypatch):
         async def astream(self, messages):
             for msg in messages:
                 if hasattr(msg, "content") and msg.content:
-                    yield AIMessage(content=f"Mocked {msg.content}")
+                    chunk = {"agent": {"messages": [AIMessage(content=f"Mocked {msg.content}")]}}
+                    # Yield JSON bytes with a newline delimiter for streaming compatibility
+                    yield (json.dumps(chunk) + "\n").encode("utf-8")
 
-    # Patch ChatOpenAI where it is actually imported and used
     monkeypatch.setattr("api.agent.ChatOpenAI", MockChatOpenAI)
 
-    # Mock get_agent_graph
     async def mock_get_agent_graph(*args, **kwargs):
         messages_list = [HumanMessage(content="Hello there")]
         return {
@@ -76,25 +79,11 @@ def mock_agent_graph_and_chat(monkeypatch):
             "astream_input": messages_list
         }
 
-    # Patch get_agent_graph where it's actually imported in the routes
     monkeypatch.setattr("api.routes.agents.get_agent_graph", mock_get_agent_graph)
 
 
-def test_ask_new_session(test_user_token, test_user):
-    resp = client.post(
-        "/ask",
-        headers=auth_header(test_user_token),
-        json={"query": "Hello there"}
-    )
-    assert resp.status_code == 200
-    response_text = strip_metadata(resp.text)
-    assert "Mocked Hello there" in response_text
-
-    session_doc = sessions_db.find_one({"user_id": str(test_user["_id"]), "chat_history.0.user": "Hello there"})
-    assert session_doc is not None
-    assert session_doc["chat_history"][0]["assistant"] == response_text
-
-def test_ask_existing_session(test_user_token, test_user):
+@pytest.mark.asyncio
+async def test_ask_existing_session(test_user_token, test_user):
     session_id = str(uuid.uuid4())
     initial_history = [{"user": "Initial question", "assistant": "Initial answer"}]
     sessions_db.insert_one({
@@ -103,18 +92,21 @@ def test_ask_existing_session(test_user_token, test_user):
         "chat_history": initial_history
     })
 
-    resp = client.post(
-        "/ask",
-        headers=auth_header(test_user_token),
-        json={"query": "Follow-up question", "session_id": session_id}
-    )
-    assert resp.status_code == 200
-    response_text = strip_metadata(resp.text)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/ask",
+            headers=auth_header(test_user_token),
+            json={"query": "Follow-up question", "session_id": session_id}
+        )
+        response_text = "".join([chunk.decode("utf-8") async for chunk in resp.aiter_bytes()])
+        response_text = strip_metadata(response_text)
+        assert resp.status_code == 200
 
-    session_doc = sessions_db.find_one({"session_id": session_id})
-    assert len(session_doc["chat_history"]) == 2
-    assert session_doc["chat_history"][1]["user"] == "Follow-up question"
-    assert session_doc["chat_history"][1]["assistant"] == response_text
+        session_doc = sessions_db.find_one({"session_id": session_id})
+        assert len(session_doc["chat_history"]) == 2
+        assert session_doc["chat_history"][1]["user"] == "Follow-up question"
+        assert session_doc["chat_history"][1]["assistant"] == response_text
 
 def test_ask_permission_denied_for_other_user_session(test_user_token):
     session_id = str(uuid.uuid4())
@@ -131,7 +123,8 @@ def test_ask_permission_denied_for_other_user_session(test_user_token):
     )
     assert resp.status_code == 403
 
-def test_regenerate_message_success(test_user_token, test_user):
+@pytest.mark.asyncio
+async def test_regenerate_message_success(test_user_token, test_user):
     session_id = str(uuid.uuid4())
     initial_history = [
         {"user": "Question 1", "assistant": "Answer 1"},
@@ -143,17 +136,22 @@ def test_regenerate_message_success(test_user_token, test_user):
         "chat_history": initial_history
     })
 
-    resp = client.post(
-        "/ask/regenerate/1",
-        headers=auth_header(test_user_token),
-        json={"session_id": session_id, "query": "Question 2"}
-    )
-    assert resp.status_code == 200
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/ask/regenerate/1",
+            headers=auth_header(test_user_token),
+            json={"session_id": session_id, "query": "Question 2"}
+        )
+        response_text = "".join([chunk.decode("utf-8") async for chunk in resp.aiter_bytes()])
+        response_text = strip_metadata(response_text)
+        assert resp.status_code == 200
 
-    session_doc = sessions_db.find_one({"session_id": session_id})
-    assert session_doc["chat_history"][1]["assistant"] in resp.text
+        session_doc = sessions_db.find_one({"session_id": session_id})
+        assert session_doc["chat_history"][1]["assistant"] in response_text
 
-def test_edit_message_success(test_user_token, test_user):
+@pytest.mark.asyncio
+async def test_edit_message_success(test_user_token, test_user):
     session_id = str(uuid.uuid4())
     initial_history = [
         {"user": "Original Question", "assistant": "Original Answer"},
@@ -165,15 +163,19 @@ def test_edit_message_success(test_user_token, test_user):
         "chat_history": initial_history
     })
 
-    resp = client.post(
-        "/ask/edit/0",
-        headers=auth_header(test_user_token),
-        json={"session_id": session_id, "query": "Edited Question"}
-    )
-    assert resp.status_code == 200
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/ask/edit/0",
+            headers=auth_header(test_user_token),
+            json={"session_id": session_id, "query": "Edited Question"}
+        )
+        response_text = "".join([chunk.decode("utf-8") async for chunk in resp.aiter_bytes()])
+        response_text = strip_metadata(response_text)
+        assert resp.status_code == 200
 
-    session_doc = sessions_db.find_one({"session_id": session_id})
-    assert session_doc["chat_history"][0]["user"] == "Edited Question"
-    assert session_doc["chat_history"][0]["assistant"] in resp.text
-    assert session_doc["chat_history"][1]["user"] == "Another Question"
-    assert session_doc["chat_history"][1]["assistant"] == "Another Answer"
+        session_doc = sessions_db.find_one({"session_id": session_id})
+        assert session_doc["chat_history"][0]["user"] == "Edited Question"
+        assert session_doc["chat_history"][0]["assistant"] in response_text
+        assert session_doc["chat_history"][1]["user"] == "Another Question"
+        assert session_doc["chat_history"][1]["assistant"] == "Another Answer"

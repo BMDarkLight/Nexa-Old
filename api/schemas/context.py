@@ -10,18 +10,26 @@ import pandas as pd
 from api.schemas.base import PyObjectId
 
 def extract_text_from_pdf(file_content: bytes) -> str:
-    pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text() + "\n"
-    return text
+    try:
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail="Failed to extract text from PDF file.")
 
 def extract_text_from_docx(file_content: bytes) -> str:
-    doc = docx.Document(io.BytesIO(file_content))
-    text = ""
-    for para in doc.paragraphs:
-        text += para.text + "\n"
-    return text
+    try:
+        doc = docx.Document(io.BytesIO(file_content))
+        text = ""
+        for para in doc.paragraphs:
+            text += para.text + "\n"
+        return text
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=400, detail="Failed to extract text from DOCX file.")
 
 def extract_text_from_excel(file_content: bytes) -> str:
     try:
@@ -31,7 +39,8 @@ def extract_text_from_excel(file_content: bytes) -> str:
             text += col + "\n"
             text += "\n".join(excel_data[col].dropna().astype(str).tolist()) + "\n"
         return text
-    except Exception:
+    except Exception as e:
+        print(e)
         raise HTTPException(status_code=400, detail="Failed to extract text from Excel file.")
     
 def extract_text_from_csv(file_content: bytes) -> str:
@@ -42,7 +51,8 @@ def extract_text_from_csv(file_content: bytes) -> str:
             text += col + "\n"
             text += "\n".join(csv_data[col].dropna().astype(str).tolist()) + "\n"
         return text
-    except Exception:
+    except Exception as e:
+        print(e)
         raise HTTPException(status_code=400, detail="Failed to extract text from CSV file.")
 
 def extract_table_from_excel(file_content: bytes) -> Dict[str, Any]:
@@ -57,7 +67,8 @@ def extract_table_from_excel(file_content: bytes) -> Dict[str, Any]:
             "shape": shape,
             "dataframe": df
         }
-    except Exception:
+    except Exception as e:
+        print(e)
         raise HTTPException(status_code=400, detail="Failed to extract table from Excel file.")
 
 def extract_table_from_csv(file_content: bytes) -> Dict[str, Any]:
@@ -72,5 +83,6 @@ def extract_table_from_csv(file_content: bytes) -> Dict[str, Any]:
             "shape": shape,
             "dataframe": df
         }
-    except Exception:
+    except Exception as e:
+        print(e)
         raise HTTPException(status_code=400, detail="Failed to extract table from CSV file.")
