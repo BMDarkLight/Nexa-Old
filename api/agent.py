@@ -11,14 +11,15 @@ import logging
 import unidecode
 
 from api.embed import similarity, embed_question
-
+from api.schemas.agents import convert_messages_to_dict
 from api.database import agents_db, connectors_db, knowledge_db
 
 
-def retrieve_relevant_context(question_emb: list, context_docs: List[Dict[str, Any]], top_n: int = 3) -> str:
-    if not context_docs or not question_emb:
+def retrieve_relevant_context(question: list, context_docs: List[Dict[str, Any]], top_n: int = 3) -> str:
+    if not context_docs or not question:
         return ""
 
+    question_emb = embed_question(question)
     scored_docs = []
     for doc in context_docs:
         doc_emb = doc.get("embedding")
@@ -39,19 +40,6 @@ def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     tool_name = f"{prefix}_{sanitized}".lower()
     llm_label = name.strip()
     return {"tool_name": tool_name, "llm_label": llm_label}
-
-def convert_messages_to_dict(messages: List[Any]) -> List[Dict[str, str]]:
-    result = []
-    for m in messages:
-        if isinstance(m, SystemMessage):
-            result.append({"role": "system", "content": m.content})
-        elif isinstance(m, HumanMessage):
-            result.append({"role": "user", "content": m.content})
-        elif isinstance(m, AIMessage):
-            result.append({"role": "assistant", "content": m.content})
-        else:
-            raise ValueError(f"Cannot convert message: {m}")
-    return result
 
 @traceable
 async def get_agent_graph(
@@ -163,7 +151,7 @@ async def get_agent_graph(
             if entry_doc and "chunks" in entry_doc:
                 context_docs.extend(entry_doc["chunks"])
 
-        relevant_context = await retrieve_relevant_context(question, context_docs)
+        relevant_context = retrieve_relevant_context(question, context_docs)
 
         system_prompt = f"""
             You are an AI agent built by user in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.

@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, TypedDict, Literal
+from typing import Optional, List, TypedDict, Literal, Any, Dict
+from langchain.schema import HumanMessage, AIMessage, SystemMessage
 
 from api.schemas.base import PyObjectId
 from api.database import sessions_db
@@ -95,3 +96,17 @@ def replace_chat_history_from_point(session_id: str, user_id: str, truncated_his
         {"session_id": session_id},
         {"$set": {"chat_history": final_history, "user_id": user_id}}
     )
+
+def convert_messages_to_dict(messages: List[Any]) -> List[Dict[str, str]]:
+    result = []
+    for m in messages:
+        if isinstance(m, SystemMessage):
+            result.append({"role": "system", "content": m.content})
+        elif isinstance(m, HumanMessage):
+            result.append({"role": "user", "content": m.content})
+        elif isinstance(m, AIMessage):
+            result.append({"role": "assistant", "content": m.content})
+        else:
+            raise ValueError(f"Cannot convert message: {m}")
+    return result
+

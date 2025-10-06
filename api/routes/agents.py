@@ -1,5 +1,6 @@
 from fastapi import BackgroundTasks, Depends, APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from bson import ObjectId
 from typing import List
 import datetime
@@ -8,10 +9,17 @@ import logging
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry, replace_chat_history_from_point
 from api.database import sessions_db, agents_db, connectors_db
 from api.agent import get_agent_graph
-from api.schemas.agents import Agent, AgentCreate, AgentUpdate
+from api.schemas.agents import Agent, AgentCreate, AgentUpdate, convert_messages_to_dict
 from api.auth import verify_token, oauth2_scheme
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+def _build_astream_input(system_content, chat_history, user_query):
+    messages = []
+    messages.append(SystemMessage(content=system_content))
+    for entry in chat_history:
+        messages.append(HumanMessage(content=entry["user"]))
+        messages.append(AIMessage(content=entry["assistant"]))
+    messages.append(HumanMessage(content=user_query))
+    return convert_messages_to_dict(messages)
 
 router = APIRouter(tags=["Agent"])
 
@@ -20,7 +28,6 @@ def agent_doc_to_model(agent_doc):
     agent["id"] = str(agent.pop("_id"))
     if "org" in agent:
         agent["org"] = str(agent["org"])
-    # Always ensure context is a list
     if "context" not in agent or agent["context"] is None:
         agent["context"] = []
     elif not isinstance(agent["context"], list):
@@ -96,20 +103,12 @@ async def ask(
     async def response_generator():
         try:
             full_answer = ""
-            astream_input = []
-
-            astream_input.append(SystemMessage(
-                content=f"You are an AI agent built by user in Nexa AI platform. "
-                        f"Operating as the agent named {agent_name}. "
-                        f"Description: {agent_graph.get('description', 'No description provided')}."
-            ))
-
-            for entry in chat_history:
-                astream_input.append(HumanMessage(content=entry["user"]))
-                astream_input.append(AIMessage(content=entry["assistant"]))
-
-            astream_input.append(HumanMessage(content=query.query))
-
+            system_content = (
+                f"You are an AI agent built by user in Nexa AI platform. "
+                f"Operating as the agent named {agent_name}. "
+                f"Description: {agent_graph.get('description', 'No description provided')}."
+            )
+            astream_input = _build_astream_input(system_content, chat_history, query.query)
             if graph:
                 try:
                     async for chunk in graph.astream(astream_input):
@@ -199,14 +198,10 @@ async def regenerate(
     async def response_generator():
         try:
             full_answer = ""
-            astream_input = []
-            astream_input.append(SystemMessage(
-                content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-            ))
-            for entry in truncated_history:
-                astream_input.append(HumanMessage(content=entry["user"]))
-                astream_input.append(AIMessage(content=entry["assistant"]))
-            astream_input.append(HumanMessage(content=original_query))
+            system_content = (
+                f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+            )
+            astream_input = _build_astream_input(system_content, truncated_history, original_query)
             if graph:
                 try:
                     async for chunk in graph.astream(astream_input):
@@ -297,14 +292,10 @@ async def edit_message(
     async def response_generator():
         try:
             full_answer = ""
-            astream_input = []
-            astream_input.append(SystemMessage(
-                content=f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-            ))
-            for entry in truncated_history:
-                astream_input.append(HumanMessage(content=entry["user"]))
-                astream_input.append(AIMessage(content=entry["assistant"]))
-            astream_input.append(HumanMessage(content=query))
+            system_content = (
+                f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
+            )
+            astream_input = _build_astream_input(system_content, truncated_history, query)
             if graph:
                 try:
                     async for chunk in graph.astream(astream_input):
