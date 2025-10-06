@@ -187,7 +187,21 @@ async def get_agent_graph(
         final_agent_name = selected_agent["name"]
         agent_llm = ChatOpenAI(model=selected_agent["model"], temperature=selected_agent.get("temperature", 0.7), streaming=True, max_retries=3)
         graph = create_react_agent(agent_llm, active_tools)
+        setattr(graph, "_is_react_agent", True)
+        graph.system_prompt = system_prompt
+
+        messages_dict = convert_messages_to_dict(messages_list)
+
+        return {
+            "graph": graph,
+            "messages": messages_dict,
+            "final_agent_name": final_agent_name,
+            "final_agent_id": str(final_agent_id) if final_agent_id else None,
+        }
     else:
+        agent_llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, temperature=0.7, max_retries=3)
+        graph = create_react_agent(agent_llm, tools=[])
+        setattr(graph, "_is_react_agent", True)
         system_prompt = f"""
             You are an AI agent called Generalist in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.
             You do not have access to any specialized tools or connectors. You are a general-purpose fallback assistant that can help with a wide range of topics. You are called when no other specialized agents are available.
@@ -206,6 +220,8 @@ async def get_agent_graph(
 
             Also, User's Organization ID is {organization_id}.
         """
+        graph.system_prompt = system_prompt
+
         messages_list = [SystemMessage(content=system_prompt)]
         for entry in chat_history:
             user_text = entry.get("user", "").strip()
@@ -216,9 +232,6 @@ async def get_agent_graph(
                 messages_list.append(AIMessage(content=assistant_text))
         messages_list.append(HumanMessage(content=question))
 
-        agent_llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, temperature=0.7, max_retries=3)
-        graph = agent_llm
-
         messages_dict = convert_messages_to_dict(messages_list)
 
         return {
@@ -227,12 +240,3 @@ async def get_agent_graph(
             "final_agent_name": "Generalist",
             "final_agent_id": None,
         }
-
-    messages_dict = convert_messages_to_dict(messages_list)
-
-    return {
-        "graph": graph,
-        "messages": messages_dict,
-        "final_agent_name": final_agent_name,
-        "final_agent_id": str(final_agent_id) if final_agent_id else None,
-    }

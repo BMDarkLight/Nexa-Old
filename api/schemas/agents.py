@@ -106,7 +106,22 @@ def convert_messages_to_dict(messages: List[Any]) -> List[Dict[str, str]]:
             result.append({"role": "user", "content": m.content})
         elif isinstance(m, AIMessage):
             result.append({"role": "assistant", "content": m.content})
+        elif isinstance(m, dict):
+            if "user" in m:
+                result.append({"role": "user", "content": m["user"]})
+            if "assistant" in m:
+                result.append({"role": "assistant", "content": m["assistant"]})
         else:
             raise ValueError(f"Cannot convert message: {m}")
     return result
 
+def agent_doc_to_model(agent_doc):
+    agent = dict(agent_doc)
+    agent["id"] = str(agent.pop("_id"))
+    if "org" in agent:
+        agent["org"] = str(agent["org"])
+    if "context" not in agent or agent["context"] is None:
+        agent["context"] = []
+    elif not isinstance(agent["context"], list):
+        agent["context"] = list(agent["context"]) if agent["context"] else []
+    return agent

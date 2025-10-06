@@ -1,6 +1,7 @@
 from fastapi import BackgroundTasks, Depends, APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+
 from bson import ObjectId
 from typing import List
 import datetime
@@ -9,30 +10,128 @@ import logging
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry, replace_chat_history_from_point
 from api.database import sessions_db, agents_db, connectors_db
 from api.agent import get_agent_graph
-from api.schemas.agents import Agent, AgentCreate, AgentUpdate, convert_messages_to_dict
+from api.schemas.agents import Agent, AgentCreate, AgentUpdate, agent_doc_to_model
 from api.auth import verify_token, oauth2_scheme
-
-def _build_astream_input(system_content, chat_history, user_query):
-    messages = []
-    messages.append(SystemMessage(content=system_content))
-    for entry in chat_history:
-        messages.append(HumanMessage(content=entry["user"]))
-        messages.append(AIMessage(content=entry["assistant"]))
-    messages.append(HumanMessage(content=user_query))
-    return convert_messages_to_dict(messages)
 
 router = APIRouter(tags=["Agent"])
 
-def agent_doc_to_model(agent_doc):
-    agent = dict(agent_doc)
-    agent["id"] = str(agent.pop("_id"))
-    if "org" in agent:
-        agent["org"] = str(agent["org"])
-    if "context" not in agent or agent["context"] is None:
-        agent["context"] = []
-    elif not isinstance(agent["context"], list):
-        agent["context"] = list(agent["context"]) if agent["context"] else []
-    return agent
+def _prepare_astream_input(graph, system_content, chat_history, query_text):
+    """
+    Prepares the input messages for agent streaming.
+    For React agents:
+        - Returns a list of BaseMessage objects (SystemMessage, HumanMessage, AIMessage).
+        - Normalizes all message content by stripping whitespace.
+        - Includes the system message as SystemMessage, chat history as HumanMessage/AIMessage, and the current query as HumanMessage.
+    For non-React agents:
+        - Keeps existing behavior (BaseMessage or dicts as previously).
+    """
+    is_react = False
+    if hasattr(graph, "_is_react_agent") and getattr(graph, "_is_react_agent", False):
+        is_react = True
+    elif (
+        hasattr(graph, "tools")
+        or hasattr(graph, "_tool_names")
+        or hasattr(graph, "_react_agent")
+        or hasattr(graph, "react_agent")
+    ):
+        is_react = True
+    else:
+        graph_cls = type(graph).__name__.lower()
+        if "react" in graph_cls:
+            is_react = True
+
+    def normalize_content(val):
+        if val is None:
+            return ""
+        return str(val).strip()
+
+    if is_react:
+        # Robustly resolve system prompt for React agents
+        resolved_system_content = system_content
+        if not resolved_system_content:
+            if hasattr(graph, "system_prompt") and getattr(graph, "system_prompt", None):
+                resolved_system_content = getattr(graph, "system_prompt")
+            elif hasattr(graph, "messages") and isinstance(getattr(graph, "messages", None), list):
+                messages_list = getattr(graph, "messages", [])
+                if messages_list and isinstance(messages_list[0], SystemMessage):
+                    resolved_system_content = messages_list[0].content
+            if not resolved_system_content:
+                resolved_system_content = "You are an AI agent in Nexa AI platform."
+        resolved_system_content = normalize_content(resolved_system_content)
+        if not resolved_system_content:
+            resolved_system_content = "You are an AI agent in Nexa AI platform."
+
+        messages = []
+        # Always start with a system message
+        messages.append(SystemMessage(content=resolved_system_content))
+
+        # Normalize chat history: append HumanMessage or AIMessage as appropriate
+        for entry in chat_history:
+            if isinstance(entry, dict):
+                # user
+                if "user" in entry:
+                    user_content = normalize_content(entry["user"])
+                    if user_content:
+                        messages.append(HumanMessage(content=user_content))
+                # assistant
+                if "assistant" in entry:
+                    assistant_content = normalize_content(entry["assistant"])
+                    if assistant_content:
+                        messages.append(AIMessage(content=assistant_content))
+                # ai (treated as assistant)
+                if "ai" in entry:
+                    ai_content = normalize_content(entry["ai"])
+                    if ai_content:
+                        messages.append(AIMessage(content=ai_content))
+            else:
+                # Defensive: handle BaseMessage objects or similar
+                role = getattr(entry, "role", None)
+                content = getattr(entry, "content", None)
+                content_str = normalize_content(content)
+                if role == "user" and content_str:
+                    messages.append(HumanMessage(content=content_str))
+                elif role == "assistant" and content_str:
+                    messages.append(AIMessage(content=content_str))
+        # Add current query as HumanMessage
+        user_query_content = normalize_content(query_text)
+        if not user_query_content:
+            user_query_content = ""
+        messages.append(HumanMessage(content=user_query_content))
+        return messages
+    else:
+        # Non-react agents: use BaseMessage objects, but normalize content to strings and strip whitespace
+        messages = []
+        if system_content:
+            sys_content = normalize_content(system_content)
+            if sys_content:
+                messages.append(SystemMessage(content=sys_content))
+        for entry in chat_history:
+            if isinstance(entry, dict):
+                if "user" in entry:
+                    user_content = normalize_content(entry["user"])
+                    if user_content:
+                        messages.append(HumanMessage(content=user_content))
+                if "assistant" in entry:
+                    assistant_content = normalize_content(entry["assistant"])
+                    if assistant_content:
+                        messages.append(AIMessage(content=assistant_content))
+                if "ai" in entry:
+                    ai_content = normalize_content(entry["ai"])
+                    if ai_content:
+                        messages.append(AIMessage(content=ai_content))
+            else:
+                role = getattr(entry, "role", None)
+                content = getattr(entry, "content", None)
+                content_str = normalize_content(content)
+                if role == "user" and content_str:
+                    messages.append(HumanMessage(content=content_str))
+                elif role == "assistant" and content_str:
+                    messages.append(AIMessage(content=content_str))
+        user_query_content = normalize_content(query_text)
+        if not user_query_content:
+            user_query_content = ""
+        messages.append(HumanMessage(content=user_query_content))
+        return messages
 
 @router.post("/ask")
 async def ask(
@@ -57,8 +156,6 @@ async def ask(
         raise HTTPException(status_code=403, detail="You do not belong to an organization.")
 
     agent_id_to_use = None
-    connectors = []
-    context = []
     agent_doc = None
 
     if query.agent_id:
@@ -103,22 +200,39 @@ async def ask(
     async def response_generator():
         try:
             full_answer = ""
-            system_content = (
-                f"You are an AI agent built by user in Nexa AI platform. "
-                f"Operating as the agent named {agent_name}. "
-                f"Description: {agent_graph.get('description', 'No description provided')}."
-            )
-            astream_input = _build_astream_input(system_content, chat_history, query.query)
+            input_messages = _prepare_astream_input(graph, system_content=None, chat_history=chat_history, query_text=query.query)
             if graph:
                 try:
-                    async for chunk in graph.astream(astream_input):
-                        content = getattr(chunk, "content", None)
-                        if content is None and isinstance(chunk, dict):
-                            content = chunk.get("content", "")
-                        elif content is None:
-                            content = str(chunk)
-                        full_answer += content
-                        yield content
+                    async for chunk in graph.astream({"messages": input_messages}):
+                        # Logging for each chunk
+                        logging.info(f"Chunk received: {chunk}")
+                        contents = []
+                        # Support React-agent-wrapped responses: dict with "agent" key containing "messages"
+                        if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
+                            agent_messages = chunk["agent"]["messages"]
+                            for msg in agent_messages:
+                                # If AIMessage, get content
+                                if isinstance(msg, AIMessage):
+                                    msg_content = getattr(msg, "content", None)
+                                    if msg_content:
+                                        contents.append(msg_content)
+                        else:
+                            # Previous cases: direct "content" key or BaseMessage
+                            content = None
+                            if isinstance(chunk, dict):
+                                content = chunk.get("content", "")
+                            elif isinstance(chunk, BaseMessage):
+                                content = getattr(chunk, "content", None)
+                            else:
+                                content = str(chunk)
+                            if content is None:
+                                content = ""
+                            if content:
+                                contents.append(content)
+                        for content_piece in contents:
+                            if content_piece:
+                                yield content_piece
+                                full_answer += content_piece
                 except Exception as exc:
                     logger.exception("Exception during streaming agent response")
                     yield f"\n[Error while streaming response: {str(exc)}]\n"
@@ -198,20 +312,37 @@ async def regenerate(
     async def response_generator():
         try:
             full_answer = ""
-            system_content = (
-                f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-            )
-            astream_input = _build_astream_input(system_content, truncated_history, original_query)
+            input_messages = _prepare_astream_input(graph, system_content=None, chat_history=truncated_history, query_text=original_query)
             if graph:
                 try:
-                    async for chunk in graph.astream(astream_input):
-                        content = getattr(chunk, "content", None)
-                        if content is None and isinstance(chunk, dict):
-                            content = chunk.get("content", "")
-                        elif content is None:
-                            content = str(chunk)
-                        full_answer += content
-                        yield content
+                    async for chunk in graph.astream({"messages": input_messages}):
+                        # Logging for each chunk
+                        logging.info(f"Chunk received: {chunk}")
+                        contents = []
+                        # Support React-agent-wrapped responses: dict with "agent" key containing "messages"
+                        if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
+                            agent_messages = chunk["agent"]["messages"]
+                            for msg in agent_messages:
+                                if isinstance(msg, AIMessage):
+                                    msg_content = getattr(msg, "content", None)
+                                    if msg_content:
+                                        contents.append(msg_content)
+                        else:
+                            content = None
+                            if isinstance(chunk, dict):
+                                content = chunk.get("content", "")
+                            elif isinstance(chunk, BaseMessage):
+                                content = getattr(chunk, "content", None)
+                            else:
+                                content = str(chunk)
+                            if content is None:
+                                content = ""
+                            if content:
+                                contents.append(content)
+                        for content_piece in contents:
+                            if content_piece:
+                                yield content_piece
+                                full_answer += content_piece
                 except Exception as exc:
                     logger.exception("Exception during streaming agent response (regenerate)")
                     yield f"\n[Error: An error occurred while generating the response. Details: {str(exc)}]\n"
@@ -292,20 +423,36 @@ async def edit_message(
     async def response_generator():
         try:
             full_answer = ""
-            system_content = (
-                f"You are an AI agent built by user in Nexa AI platform. You are now operating as the agent named {agent_name}. Description: {agent_graph.get('description', 'No description provided')}."
-            )
-            astream_input = _build_astream_input(system_content, truncated_history, query)
+            input_messages = _prepare_astream_input(graph, system_content=None, chat_history=truncated_history, query_text=query)
             if graph:
                 try:
-                    async for chunk in graph.astream(astream_input):
-                        content = getattr(chunk, "content", None)
-                        if content is None and isinstance(chunk, dict):
-                            content = chunk.get("content", "")
-                        elif content is None:
-                            content = str(chunk)
-                        full_answer += content
-                        yield content
+                    async for chunk in graph.astream({"messages": input_messages}):
+                        # Logging for each chunk
+                        logging.info(f"Chunk received: {chunk}")
+                        contents = []
+                        if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
+                            agent_messages = chunk["agent"]["messages"]
+                            for msg in agent_messages:
+                                if isinstance(msg, AIMessage):
+                                    msg_content = getattr(msg, "content", None)
+                                    if msg_content:
+                                        contents.append(msg_content)
+                        else:
+                            content = None
+                            if isinstance(chunk, dict):
+                                content = chunk.get("content", "")
+                            elif isinstance(chunk, BaseMessage):
+                                content = getattr(chunk, "content", None)
+                            else:
+                                content = str(chunk)
+                            if content is None:
+                                content = ""
+                            if content:
+                                contents.append(content)
+                        for content_piece in contents:
+                            if content_piece:
+                                yield content_piece
+                                full_answer += content_piece
                 except Exception as exc:
                     logger.exception("Exception during streaming agent response (edit)")
                     yield f"\n[Error: An error occurred while generating the response. Details: {str(exc)}]\n"
