@@ -30,6 +30,7 @@ interface Agents {
   model: string;
   temperature: number;
   tools: string[];
+  context: string[];
   created_at: string;
   updated_at: string;
 }
@@ -128,7 +129,6 @@ export default function AgentCard() {
               }
             } catch {}
           });
-        } else {
         }
       } catch {
         toast.error("ارتباط با سرور برقرار نشد.", {
@@ -165,6 +165,8 @@ export default function AgentCard() {
               (c) => c.settings && Object.keys(c.settings).length > 0
             );
 
+            const hasContext = agent.context && agent.context.length > 0;
+
             return (
               <Card className="w-full text-center" key={agent._id}>
                 <div>
@@ -198,43 +200,21 @@ export default function AgentCard() {
                           {hasActiveConnector ? "فعال" : "فعال نیست"}
                         </Badge>
                       </div>
+
                       <div className="flex justify-between text-xs md:text-sm">
                         <p>اتصالات</p>
-                        <div>
-                          {connectors.length > 0 ? (
-                            <TooltipProvider>
-                              <div className="flex flex-row-reverse -space-x-1">
-                                {connectors.map((connector, index) => {
-                                  const connData =
-                                    connectorIcons[connector.connector_type];
-                                  if (!connData) return null;
-                                  return (
-                                    <Tooltip key={index}>
-                                      <TooltipTrigger asChild>
-                                        <div className="w-5 h-5 rounded-full overflow-hidden cursor-pointer transition-transform hover:scale-110 border-1">
-                                          <img
-                                            src={connData.src}
-                                            alt={connData.name}
-                                            className="object-cover w-full h-full"
-                                          />
-                                        </div>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>{connData.name}</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  );
-                                })}
-                              </div>
-                            </TooltipProvider>
-                          ) : (
-                            <Badge className="bg-gray-200 text-gray-600">
-                              اتصالی ندارد
-                            </Badge>
-                          )}
-                        </div>
+                        {hasContext ? (
+                          <Badge className="bg-[#0596691A] text-[#047857]">
+                            دارای مرجع است
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-gray-200 text-gray-600">
+                            متصل نیست
+                          </Badge>
+                        )}
                       </div>
                     </CardContent>
+
                     <div>
                       <CardFooter className="w-full">
                         <Button

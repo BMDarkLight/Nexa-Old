@@ -92,7 +92,7 @@ export default function EditAgent() {
         return;
       }
 
-      router.push("/dashboard/agent");
+      router.push(`/dashboard/agent/new-agent/uploadFile-agent/${agentId}`);
     } catch {
       alert("ثبت تغییرات با مشکل روبرو شد");
     } finally {
@@ -123,7 +123,7 @@ export default function EditAgent() {
 
       <div className="flex justify-end items-center gap-3">
         <Button onClick={handleSave} disabled={saving}>
-          {saving ? "در حال ذخیره..." : "ذخیره"}
+          {saving ? "مرحله بعد..." : "مرحله بعد"}
         </Button>
       </div>
     </div>
