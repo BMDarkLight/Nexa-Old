@@ -64,7 +64,7 @@ def similarity(vec1, vec2):
 
 def save_embedding(chunks_with_embeddings: list, org_id: ObjectId, metadata: dict = None) -> ObjectId:
     document = {
-        "org_id": org_id,
+        "org": org_id,
         "chunks": chunks_with_embeddings,
         "created_at": datetime.utcnow()
     }
@@ -78,3 +78,7 @@ def get_embeddings(document_id: ObjectId) -> list:
     if result and "chunks" in result:
         return result["chunks"]
     return []
+
+def delete_embeddings(document_id: ObjectId, org_id: ObjectId):
+    result = knowledge_db.delete_one({"_id": document_id, "org": org_id})
+    return result.deleted_count > 0

@@ -64,10 +64,9 @@ def test_list_context_entries_success(mock_dependencies):
     assert response.status_code == 200
 
     json_response = response.json()
-    assert "context_entries" in json_response
-    assert isinstance(json_response["context_entries"], list)
+    assert isinstance(json_response, list)
     # Check that each entry contains the expected keys
-    for entry in json_response["context_entries"]:
+    for entry in json_response:
         assert "context_id" in entry
         assert "file_key" in entry
         assert "filename" in entry

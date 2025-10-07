@@ -8,9 +8,10 @@ import datetime
 import logging
 
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry, replace_chat_history_from_point
-from api.database import sessions_db, agents_db, connectors_db
+from api.database import sessions_db, agents_db, connectors_db, knowledge_db
 from api.agent import get_agent_graph
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate, agent_doc_to_model
+from api.embed import delete_embeddings
 from api.auth import verify_token, oauth2_scheme
 
 router = APIRouter(tags=["Agent"])
@@ -563,10 +564,23 @@ def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can delete agents.")
     if not ObjectId.is_valid(agent_id):
         raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
+    
+    try:
+        context_entries = agent.get("context", [])
+        for entry in context_entries:
+            delete_embeddings(entry, ObjectId(user["organization"]))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete associated knowledge entries: {str(e)}")
+    
     result = agents_db.delete_one({
         "_id": ObjectId(agent_id),
         "org": ObjectId(user["organization"])
     })
+
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
+    
     return {"message": f"Agent '{agent_id}' deleted successfully."}

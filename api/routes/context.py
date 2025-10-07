@@ -33,18 +33,26 @@ def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
         context_ids = agent.get("context", [])
         context_entries = []
         for cid in context_ids:
-            entry = knowledge_db.find_one({"_id": cid, "org": ObjectId(user["organization"])})
-            if entry:
-                context_entries.append({
-                    "context_id": str(entry["_id"]),
-                    "file_key": entry.get("file_key"),
-                    "is_tabular": entry.get("is_tabular", False),
-                    "structured_data": entry.get("structured_data"),
-                    "created_at": str(entry.get("created_at", "")),
-                    "filename": entry.get("file_key", "").split("_", 1)[-1] if entry.get("file_key") else "",
+            try:
+                entry = knowledge_db.find_one({
+                    "_id": ObjectId(cid),
+                    "org": ObjectId(user["organization"])
                 })
+                if entry:
+                    context_entries.append({
+                        "context_id": str(entry["_id"]),
+                        "file_key": entry.get("file_key"),
+                        "is_tabular": entry.get("is_tabular", False),
+                        "structured_data": entry.get("structured_data"),
+                        "created_at": str(entry.get("created_at", "")),
+                        "filename": entry.get("file_key", "").split("_", 1)[-1] if entry.get("file_key") else "",
+                    })
+            except Exception as inner_e:
+                logger.warning(f"Skipping invalid context ID {cid}: {inner_e}")
+                continue
+
         logger.info(f"Listed {len(context_entries)} context entries for agent {agent_id}.")
-        return {"context_entries": context_entries}
+        return context_entries
     except Exception as e:
         logger.exception(f"Failed to list context entries for agent {agent_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list context entries: {str(e)}")
