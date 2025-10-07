@@ -6,6 +6,8 @@ from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
 import re
+import io
+import heapq
 import importlib
 import logging
 import unidecode
@@ -13,10 +15,10 @@ import pandas as pd
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
-from api.database import agents_db, connectors_db, knowledge_db
+from api.database import agents_db, connectors_db, knowledge_db, minio_client
 
 
-def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str, Any]], top_n: int = 3) -> str:
+def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str, Any]], top_n: int = 3, top_rows: int = 10) -> str:
     if not context_docs or not question:
         return ""
 
@@ -32,40 +34,47 @@ def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str,
     for idx, doc in enumerate(context_docs):
         try:
             if doc.get("is_tabular"):
-                structured_data = doc.get("structured_data", {})
-                if not structured_data:
+                file_key = doc.get("file_key")
+                if not file_key:
                     continue
 
-                df = pd.DataFrame(structured_data.get("sample", []))
-                if df.empty:
+                row_scores = []
+                try:
+                    obj = minio_client.get_object(bucket_name="context-files", object_name=file_key)
+
+                    if file_key.endswith(".csv"):
+                        for chunk in pd.read_csv(io.BytesIO(obj.read()), chunksize=500):
+                            for _, row in chunk.iterrows():
+                                row_text = " | ".join([str(v) for v in row.values])
+                                row_emb = embed_question(row_text)
+                                score = similarity(question_emb, row_emb)
+                                heapq.heappush(row_scores, (score, row_text))
+                                if len(row_scores) > top_rows:
+                                    heapq.heappop(row_scores)
+
+                    elif file_key.endswith((".xls", ".xlsx")):
+                        df = pd.read_excel(io.BytesIO(obj.read()))
+                        for _, row in df.iterrows():
+                            row_text = " | ".join([str(v) for v in row.values])
+                            row_emb = embed_question(row_text)
+                            score = similarity(question_emb, row_emb)
+                            heapq.heappush(row_scores, (score, row_text))
+                            if len(row_scores) > top_rows:
+                                heapq.heappop(row_scores)
+
+                except Exception as e:
+                    logging.error(f"Failed to load tabular file {file_key}: {e}")
                     continue
 
-                table_text = df.head(10).to_string(index=False)
-                table_emb = embed_question(table_text)
-                score = similarity(question_emb, table_emb)
+                if not row_scores:
+                    continue
 
-                keywords = re.findall(r'\b[A-Za-z0-9_]+\b', question_text.lower())
-                matching_columns = [col for col in df.columns if any(k in col.lower() for k in keywords)]
+                row_scores.sort(reverse=True)
+                relevant_rows = [row_text for _, row_text in row_scores]
 
-                if matching_columns:
-                    filtered_df = df[df[matching_columns].apply(lambda row: any(
-                        str(v).lower() in question_text.lower() for v in row.values
-                    ), axis=1)]
-                else:
-                    filtered_df = df.head(5)
-
-                preview_rows = min(10, len(filtered_df))
-                filtered_preview = filtered_df.head(preview_rows).to_string(index=False)
-
-                filename = "_".join(doc.get("file_key", "").split("_")[1:]) if doc.get("file_key") else "unknown"
-
-                context_text = (
-                    f"📊 Relevant data from '{filename}':\n"
-                    f"{filtered_preview}\n\n"
-                    f"Columns: {', '.join(df.columns[:8])}"
-                )
-
-                scored_docs.append((score, {"text": context_text}))
+                filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
+                context_text = f"📊 Top relevant data from '{filename}':\n" + "\n".join(relevant_rows)
+                scored_docs.append((max(score for score, _ in row_scores), {"text": context_text}))
                 continue
 
             text_chunks = [chunk.get("text", "") for chunk in doc.get("chunks", [])]
@@ -73,10 +82,7 @@ def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str,
             if not combined_text.strip():
                 continue
 
-            doc_emb = doc.get("embedding")
-            if not doc_emb:
-                doc_emb = embed_question(combined_text[:2000])
-
+            doc_emb = doc.get("embedding") or embed_question(combined_text[:2000])
             score = similarity(question_emb, doc_emb)
             scored_docs.append((score, {"text": combined_text}))
 
@@ -89,8 +95,8 @@ def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str,
     scored_docs.sort(reverse=True, key=lambda x: x[0])
     top_docs = [doc for _, doc in scored_docs[:top_n]]
     final_context = "\n\n".join(doc.get("text", "") for doc in top_docs if doc.get("text"))
-    logging.info(f"Returning {len(top_docs)} context entries (including tabular retrieval).")
 
+    logging.info(f"Returning {len(top_docs)} context entries (including row-level tabular retrieval).")
     return final_context
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
