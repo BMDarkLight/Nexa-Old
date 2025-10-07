@@ -80,6 +80,10 @@ jobs:
           UI_PORT=${{ secrets.UI_PORT }}
           API_PORT=${{ secrets.API_PORT }}
 
+          NEXT_PUBLIC_SERVER_URL=${{ secrets.SERVER_URL }}
+          NEXT_PUBLIC_UI_PORT=${{ secrets.UI_PORT }}
+          NEXT_PUBLIC_API_PORT=${{ secrets.API_PORT }}
+
           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
 
           LANGSMITH_TRACING=${{ secrets.LANGSMITH_TRACING }}
