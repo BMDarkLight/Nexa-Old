@@ -39,13 +39,14 @@ def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str,
                     continue
 
                 row_scores = []
+
                 try:
                     obj = minio_client.get_object(bucket_name="context-files", object_name=file_key)
 
                     if file_key.endswith(".csv"):
                         for chunk in pd.read_csv(io.BytesIO(obj.read()), chunksize=500):
                             for _, row in chunk.iterrows():
-                                row_text = " | ".join([str(v) for v in row.values])
+                                row_text = " | ".join([f"{col}: {val}" for col, val in row.items()])
                                 row_emb = embed_question(row_text)
                                 score = similarity(question_emb, row_emb)
                                 heapq.heappush(row_scores, (score, row_text))
@@ -55,7 +56,7 @@ def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str,
                     elif file_key.endswith((".xls", ".xlsx")):
                         df = pd.read_excel(io.BytesIO(obj.read()))
                         for _, row in df.iterrows():
-                            row_text = " | ".join([str(v) for v in row.values])
+                            row_text = " | ".join([f"{col}: {val}" for col, val in row.items()])
                             row_emb = embed_question(row_text)
                             score = similarity(question_emb, row_emb)
                             heapq.heappush(row_scores, (score, row_text))
@@ -71,9 +72,8 @@ def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str,
 
                 row_scores.sort(reverse=True)
                 relevant_rows = [row_text for _, row_text in row_scores]
-
                 filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
-                context_text = f"📊 Top relevant data from '{filename}':\n" + "\n".join(relevant_rows)
+                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(relevant_rows)
                 scored_docs.append((max(score for score, _ in row_scores), {"text": context_text}))
                 continue
 
@@ -96,7 +96,7 @@ def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str,
     top_docs = [doc for _, doc in scored_docs[:top_n]]
     final_context = "\n\n".join(doc.get("text", "") for doc in top_docs if doc.get("text"))
 
-    logging.info(f"Returning {len(top_docs)} context entries (including row-level tabular retrieval).")
+    logging.info(f"Returning {len(top_docs)} context entries (including tabular rows).")
     return final_context
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
@@ -226,9 +226,9 @@ async def get_agent_graph(
             entry_doc = knowledge_db.find_one({"_id": ObjectId(context_entry_id)})
             filename = "_".join(entry_doc.get("file_key", "").split("_")[1:]) if entry_doc.get("file_key") else ""
             if entry_doc.get("is_tabular", False):
-                entry_exp = "The data is structured an tabular, it is likely a list that you have access to, treat it as such."
+                entry_exp = "The data is structured an tabular, Use the provided rows to answer questions accurately.\n"
             else:
-                entry_exp = "The data is text, it is likely a document that you have access to, treat it as such."
+                entry_exp = "The data is text, it is likely a document that you have access to, َUse the provided context from the file to answer question accordingly.\n"
             
             context_text += f"📄 Document: '{filename}'\n{entry_doc.get('text', '')}\n{entry_exp}\n"
             if entry_doc and "chunks" in entry_doc:
@@ -248,6 +248,10 @@ async def get_agent_graph(
 
             Relevant context retrieved for this specific question from the context you have:
             {relevant_context}
+
+            Only use the Relevant context above to answer question regarding the knowledge base.
+            You must not invent any data. Only report values present in the retrieved tabular rows or text chunks. If the answer is not present, explicitly state that the knowledge base does not contain the information.
+            If the relevant context does not contain the information you need, you can use your own knowledge and reasoning to answer the question BUT explictly tell the user that the answer is not based on the organization's knowledge base.
 
             You also have access to specialized tools and connectors to help you find information and perform actions.
             Here are the available tools and connectors you can use:
