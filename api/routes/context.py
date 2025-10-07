@@ -43,7 +43,6 @@ def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
                         "context_id": str(entry["_id"]),
                         "file_key": entry.get("file_key"),
                         "is_tabular": entry.get("is_tabular", False),
-                        "structured_data": entry.get("structured_data"),
                         "created_at": str(entry.get("created_at", "")),
                         "filename": "_".join(entry.get("file_key", "").split("_")[1:]) if entry.get("file_key") else "",
                     })
@@ -59,52 +58,85 @@ def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
 
 @router.get("/agents/{agent_id}/context/{context_id}")
 def get_context_entry(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):
-    try:
-        user = verify_token(token)
-        if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
-            raise HTTPException(status_code=400, detail="Invalid ID format.")
-        agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to view it.")
-        if ObjectId(context_id) not in agent.get("context", []):
-            raise HTTPException(status_code=404, detail="Context entry not found in this agent.")
-        context_entry = knowledge_db.find_one({"_id": ObjectId(context_id), "org": ObjectId(user["organization"])})
-        if not context_entry:
-            raise HTTPException(status_code=404, detail="Context entry not found or you do not have permission to view it.")
-        content = get_embeddings(ObjectId(context_id))
-        if not content:
-            raise HTTPException(status_code=404, detail="No embeddings found for context entry.")
-        content['is_tabular'] = context_entry.get("is_tabular", False)
-        content['structured_data'] = context_entry.get("structured_data", None)
-        logger.info(f"Retrieved context entry {context_id} for agent {agent_id}.")
-        return content
-    except Exception as e:
-        logger.exception(f"Failed to retrieve context entry {context_id} for agent {agent_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve context entry: {str(e)}")
+    user = verify_token(token)
+    if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
+        raise HTTPException(status_code=400, detail="Invalid ID format.")
+
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
+    if not agent or ObjectId(context_id) not in agent.get("context", []):
+        raise HTTPException(status_code=404, detail="Context entry not found for this agent.")
+
+    context_entry = knowledge_db.find_one({"_id": ObjectId(context_id), "org": ObjectId(user["organization"])})
+    if not context_entry:
+        raise HTTPException(status_code=404, detail="Context entry not found or permission denied.")
+
+    response = {
+        "context_id": str(context_entry["_id"]),
+        "file_key": context_entry.get("file_key"),
+        "is_tabular": context_entry.get("is_tabular", False),
+        "created_at": str(context_entry.get("created_at", "")),
+        "filename": "_".join(context_entry.get("file_key", "").split("_")[1:]) if context_entry.get("file_key") else "",
+    }
+
+    if context_entry.get("is_tabular") and context_entry.get("file_key"):
+        try:
+            file_obj = minio_client.get_object("context-files", context_entry["file_key"])
+            file_content = file_obj.read()
+            if context_entry["file_key"].endswith(".csv"):
+                table_data = extract_table_from_csv(file_content)
+            else:
+                table_data = extract_table_from_excel(file_content)
+            
+            if table_data:
+                response["structured_data"] = {
+                    "schema": table_data.get("schema", {}),
+                    "sample": table_data.get("sample", []),
+                    "shape": table_data.get("shape", ())
+                }
+        except Exception as e:
+            logger.warning(f"Failed to load structured data from MinIO for context {context_id}: {e}")
+
+    return response
+
 
 @router.get("/agents/{agent_id}/context/{context_id}/ingested_content")
 def get_ingested_content(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):
-    try:
-        user = verify_token(token)
-        if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
-            raise HTTPException(status_code=400, detail="Invalid ID format.")
-        agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to view it.")
-        if ObjectId(context_id) not in agent.get("context", []):
-            raise HTTPException(status_code=404, detail="Context entry not found in this agent.")
-        context_entry = knowledge_db.find_one({"_id": ObjectId(context_id), "org": ObjectId(user["organization"])})
-        if not context_entry:
-            raise HTTPException(status_code=404, detail="Context entry not found or you do not have permission to view it.")
-        logger.info(f"Retrieved ingested content for context entry {context_id}.")
-        return {
-            "ingested_content": context_entry.get("chunks", []),
-            "is_tabular": context_entry.get("is_tabular", False),
-            "structured_data": context_entry.get("structured_data", None),
-        }
-    except Exception as e:
-        logger.exception(f"Failed to retrieve ingested content for context entry {context_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve ingested content: {str(e)}")
+    user = verify_token(token)
+    if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
+        raise HTTPException(status_code=400, detail="Invalid ID format.")
+
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
+    if not agent or ObjectId(context_id) not in agent.get("context", []):
+        raise HTTPException(status_code=404, detail="Context entry not found for this agent.")
+
+    context_entry = knowledge_db.find_one({"_id": ObjectId(context_id), "org": ObjectId(user["organization"])})
+    if not context_entry:
+        raise HTTPException(status_code=404, detail="Context entry not found or permission denied.")
+
+    response = {
+        "ingested_content": context_entry.get("chunks", []),
+        "is_tabular": context_entry.get("is_tabular", False)
+    }
+
+    if context_entry.get("is_tabular") and context_entry.get("file_key"):
+        try:
+            file_obj = minio_client.get_object("context-files", context_entry["file_key"])
+            file_content = file_obj.read()
+            if context_entry["file_key"].endswith(".csv"):
+                table_data = extract_table_from_csv(file_content)
+            else:
+                table_data = extract_table_from_excel(file_content)
+
+            if table_data:
+                response["structured_data"] = {
+                    "schema": table_data.get("schema", {}),
+                    "sample": table_data.get("sample", []),
+                    "shape": table_data.get("shape", ())
+                }
+        except Exception as e:
+            logger.warning(f"Failed to load structured data from MinIO for context {context_id}: {e}")
+
+    return response
 
 @router.post("/agents/{agent_id}/context")
 async def upload_context_file(agent_id: str, file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
@@ -126,7 +158,6 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
         file_content = await file.read()
         logger.info(f"Read file content for {file.filename} ({len(file_content)} bytes)")
         is_tabular = False
-        structured_data = None
         if content_type == "application/pdf":
             text = extract_text_from_pdf(file_content)
             if not text.strip():
@@ -150,7 +181,7 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
             logger.info(f"Saved PDF embeddings to DB with context_id={context_id}")
             knowledge_db.update_one(
                 {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": False, "structured_data": None}}
+                {"$set": {"file_key": file_key, "is_tabular": False}}
             )
             logger.info(f"Updated knowledge_db for PDF context {context_id}")
         elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
@@ -176,7 +207,7 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
             logger.info(f"Saved DOCX embeddings to DB with context_id={context_id}")
             knowledge_db.update_one(
                 {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": False, "structured_data": None}}
+                {"$set": {"file_key": file_key, "is_tabular": False}}
             )
             logger.info(f"Updated knowledge_db for DOCX context {context_id}")
         elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
@@ -205,10 +236,9 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
             context_id = save_embedding(chunks_with_embeddings, ObjectId(user["organization"]))
             logger.info(f"Saved Excel embeddings to DB with context_id={context_id}")
             is_tabular = True
-            structured_data = table_data
             knowledge_db.update_one(
                 {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": True, "structured_data": table_data}}
+                {"$set": {"file_key": file_key, "is_tabular": True}}
             )
             logger.info(f"Updated knowledge_db for Excel context {context_id}")
         elif content_type == "text/csv":
@@ -234,10 +264,9 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
             context_id = save_embedding(chunks_with_embeddings, ObjectId(user["organization"]))
             logger.info(f"Saved CSV embeddings to DB with context_id={context_id}")
             is_tabular = True
-            structured_data = table_data
             knowledge_db.update_one(
                 {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": True, "structured_data": table_data}}
+                {"$set": {"file_key": file_key, "is_tabular": True}}
             )
             logger.info(f"Updated knowledge_db for CSV context {context_id}")
         else:
@@ -254,8 +283,7 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
             content={
                 "message": "Context uploaded and processed successfully.",
                 "context_id": str(context_id),
-                "is_tabular": is_tabular,
-                "structured_data": structured_data,
+                "is_tabular": is_tabular
             }
         )
     except HTTPException:
@@ -263,185 +291,7 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
     except Exception as e:
         logger.exception(f"An error occurred while processing the file for agent_id={agent_id}, filename={file.filename}")
         raise HTTPException(status_code=500, detail=f"An error occurred while processing the file: {str(e)}")
-    
-@router.put("/agents/{agent_id}/context/{context_id}")
-async def reupload_context_file(
-    agent_id: str,
-    context_id: str,
-    file: UploadFile = File(...),
-    token: str = Depends(oauth2_scheme)
-):
-    try:
-        logger.info(f"Starting reupload_context_file for agent_id={agent_id}, context_id={context_id}, filename={file.filename}")
-        user = verify_token(token)
-        if not ObjectId.is_valid(agent_id) or not ObjectId.is_valid(context_id):
-            logger.error("Invalid agent ID or context ID format.")
-            raise HTTPException(status_code=400, detail="Invalid ID format.")
 
-        agent = agents_db.find_one({
-            "_id": ObjectId(agent_id),
-            "org": ObjectId(user["organization"])
-        })
-        if not agent:
-            logger.error(f"Agent {agent_id} not found or permission denied.")
-            raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to modify it.")
-
-        if ObjectId(context_id) not in agent.get("context", []):
-            logger.error(f"Context entry {context_id} not found in agent {agent_id}.")
-            raise HTTPException(status_code=404, detail="Context entry not found in this agent.")
-
-        context_entry = knowledge_db.find_one({"_id": ObjectId(context_id), "org": ObjectId(user["organization"])})
-        if not context_entry:
-            logger.error(f"Context entry {context_id} not found in DB or permission denied.")
-            raise HTTPException(status_code=404, detail="Context entry not found or you do not have permission to modify it.")
-
-        old_file_key = context_entry.get("file_key")
-        content_type = file.content_type
-        file_content = await file.read()
-        logger.info(f"Read file content for {file.filename} ({len(file_content)} bytes)")
-
-        is_tabular = False
-        structured_data = None
-
-        if content_type == "application/pdf":
-            text = extract_text_from_pdf(file_content)
-            if not text.strip():
-                logger.error("No extractable text in PDF.")
-                raise HTTPException(status_code=400, detail="The uploaded document contains no extractable text.")
-            chunks_with_embeddings = embed(text)
-            logger.info(f"Generated {len(chunks_with_embeddings)} embeddings for PDF")
-            if old_file_key:
-                try:
-                    minio_client.remove_object(bucket_name="context-files", object_name=old_file_key)
-                    logger.info(f"Removed old PDF file from MinIO: {old_file_key}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove old file {old_file_key}: {e}")
-            new_file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=new_file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            knowledge_db.update_one(
-                {"_id": ObjectId(context_id)},
-                {"$set": {"file_key": new_file_key, "chunks": [chunk for chunk in chunks_with_embeddings], "is_tabular": False, "structured_data": None}}
-            )
-            logger.info(f"Reuploaded PDF context {context_id} and updated DB")
-
-        elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            text = extract_text_from_docx(file_content)
-            if not text.strip():
-                logger.error("No extractable text in DOCX.")
-                raise HTTPException(status_code=400, detail="The uploaded document contains no extractable text.")
-            chunks_with_embeddings = embed(text)
-            logger.info(f"Generated {len(chunks_with_embeddings)} embeddings for DOCX")
-            if old_file_key:
-                try:
-                    minio_client.remove_object(bucket_name="context-files", object_name=old_file_key)
-                    logger.info(f"Removed old DOCX file from MinIO: {old_file_key}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove old file {old_file_key}: {e}")
-            new_file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=new_file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            knowledge_db.update_one(
-                {"_id": ObjectId(context_id)},
-                {"$set": {"file_key": new_file_key, "chunks": [chunk for chunk in chunks_with_embeddings], "is_tabular": False, "structured_data": None}}
-            )
-            logger.info(f"Reuploaded DOCX context {context_id} and updated DB")
-
-        elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-            logger.error("PowerPoint upload not supported.")
-            raise HTTPException(status_code=400, detail="Support for PowerPoint not implemented yet.")
-
-        elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-            table_data = extract_table_from_excel(file_content)
-            if not table_data:
-                logger.error("No extractable table data in Excel.")
-                raise HTTPException(status_code=400, detail="The uploaded Excel document contains no extractable table data.")
-            summary_text = f"Table with schema: {json.dumps(table_data.get('schema', {}))}, shape: {table_data.get('shape', '')}"
-            chunks_with_embeddings = embed(summary_text)
-            logger.info(f"Generated {len(chunks_with_embeddings)} embeddings for Excel summary")
-            if old_file_key:
-                try:
-                    minio_client.remove_object(bucket_name="context-files", object_name=old_file_key)
-                    logger.info(f"Removed old Excel file from MinIO: {old_file_key}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove old file {old_file_key}: {e}")
-            new_file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=new_file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            is_tabular = True
-            structured_data = table_data
-            knowledge_db.update_one(
-                {"_id": ObjectId(context_id)},
-                {"$set": {"file_key": new_file_key, "chunks": [chunk for chunk in chunks_with_embeddings], "is_tabular": True, "structured_data": table_data}}
-            )
-            logger.info(f"Reuploaded Excel context {context_id} and updated DB")
-
-        elif content_type == "text/csv":
-            table_data = extract_table_from_csv(file_content)
-            if not table_data:
-                logger.error("No extractable table data in CSV.")
-                raise HTTPException(status_code=400, detail="The uploaded CSV document contains no extractable table data.")
-            summary_text = f"Table with schema: {json.dumps(table_data.get('schema', {}))}, shape: {table_data.get('shape', '')}"
-            chunks_with_embeddings = embed(summary_text)
-            logger.info(f"Generated {len(chunks_with_embeddings)} embeddings for CSV summary")
-            if old_file_key:
-                try:
-                    minio_client.remove_object(bucket_name="context-files", object_name=old_file_key)
-                    logger.info(f"Removed old CSV file from MinIO: {old_file_key}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove old file {old_file_key}: {e}")
-            new_file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=new_file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            is_tabular = True
-            structured_data = table_data
-            knowledge_db.update_one(
-                {"_id": ObjectId(context_id)},
-                {"$set": {"file_key": new_file_key, "chunks": [chunk for chunk in chunks_with_embeddings], "is_tabular": True, "structured_data": table_data}}
-            )
-            logger.info(f"Reuploaded CSV context {context_id} and updated DB")
-
-        else:
-            logger.error(f"Unsupported file type: {content_type}")
-            raise HTTPException(status_code=400, detail="Unsupported file type.")
-
-        logger.info(f"Returning success response for reuploaded context {context_id}")
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "message": "Context file reuploaded and processed successfully.",
-                "context_id": str(context_id),
-                "is_tabular": is_tabular,
-                "structured_data": structured_data,
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"An error occurred while reuploading the file for agent_id={agent_id}, context_id={context_id}, filename={file.filename}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while processing the file: {str(e)}")
-    
 @router.delete("/agents/{agent_id}/context/{context_id}")
 def delete_context_entry(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
@@ -499,5 +349,4 @@ def download_context_file(agent_id: str, context_id: str, token: str = Depends(o
     return {
         "download_url": presigned_url,
         "is_tabular": context_entry.get("is_tabular", False),
-        "structured_data": context_entry.get("structured_data", None),
     }

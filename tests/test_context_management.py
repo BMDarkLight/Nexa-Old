@@ -25,8 +25,8 @@ def mock_dependencies(mocker):
         "_id": ObjectId(),
         "file_key": "some_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
+        "filename": "test_file.pdf"
     }
 
     mocker.patch("api.routes.context.agents_db", mock_agents_db)
@@ -56,7 +56,6 @@ def test_list_context_entries_success(mock_dependencies):
         "context": context_ids,
         "file_key": "agent_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
     }
 
@@ -65,13 +64,11 @@ def test_list_context_entries_success(mock_dependencies):
 
     json_response = response.json()
     assert isinstance(json_response, list)
-    # Check that each entry contains the expected keys
     for entry in json_response:
         assert "context_id" in entry
         assert "file_key" in entry
         assert "filename" in entry
         assert "is_tabular" in entry
-        assert "structured_data" in entry
         assert "created_at" in entry
 
 
@@ -83,22 +80,24 @@ def test_get_context_entry_success(mock_dependencies):
         "context": [context_id],
         "file_key": "agent_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
     }
     mock_dependencies["knowledge_db"].find_one.return_value = {
         "_id": context_id,
         "file_key": "some_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
+        "filename": "test_file.pdf"
     }
-    # get_embeddings is mocked to return {"content": "mocked embedding"}
 
     response = client.get(f"/agents/{agent_id}/context/{str(context_id)}", headers={"Authorization": "Bearer testtoken"})
-
     assert response.status_code == 200
-    assert response.json()["content"] == "mocked embedding"
+    json_response = response.json()
+    assert "context_id" in json_response
+    assert "file_key" in json_response
+    assert "filename" in json_response
+    assert "is_tabular" in json_response
+    assert "created_at" in json_response
 
 
 def test_get_ingested_content_success(mock_dependencies):
@@ -109,20 +108,17 @@ def test_get_ingested_content_success(mock_dependencies):
         "context": [context_id],
         "file_key": "agent_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
     }
     mock_dependencies["knowledge_db"].find_one.return_value = {
         "_id": context_id,
         "file_key": "some_file_key",
         "is_tabular": True,
-        "structured_data": {"data": "mocked structured data"},
         "created_at": datetime.utcnow(),
         "chunks": ["chunk1", "chunk2"],
     }
 
     response = client.get(f"/agents/{agent_id}/context/{str(context_id)}/ingested_content", headers={"Authorization": "Bearer testtoken"})
-
     assert response.status_code == 200
     assert "ingested_content" in response.json()
 
@@ -134,7 +130,6 @@ def test_upload_context_file_success(mock_dependencies, mocker):
         "context": [],
         "file_key": "agent_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
     }
 
@@ -148,7 +143,6 @@ def test_upload_context_file_success(mock_dependencies, mocker):
 
     mocker.patch("PyPDF2.PdfReader", return_value=MockReader())
 
-    # Use a minimal valid PDF header (reader is mocked anyway)
     pdf_buffer = io.BytesIO(b"%PDF-1.4\n%EOF\n")
 
     response = client.post(
@@ -168,7 +162,6 @@ def test_upload_context_file_invalid_type(mock_dependencies):
         "context": [],
         "file_key": "agent_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
     }
 
@@ -191,14 +184,12 @@ def test_delete_context_entry_success(mock_dependencies, mocker):
         "context": [context_id],
         "file_key": "agent_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
     }
     mock_dependencies["knowledge_db"].find_one.return_value = {
         "_id": context_id,
         "file_key": "some_file_key",
         "is_tabular": False,
-        "structured_data": None,
         "created_at": datetime.utcnow(),
     }
     mock_delete_result = mocker.Mock()
