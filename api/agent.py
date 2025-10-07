@@ -210,11 +210,27 @@ async def get_agent_graph(
                         return output
                     tool.run = logging_run
 
+        available_sources = []
+        for tool in active_tools:
+            tool_name = getattr(tool, 'name', 'unknown')
+            llm_label = getattr(tool, 'llm_label', tool_name)
+            description = getattr(tool, 'description', 'No description provided.')
+            available_sources.append(f"- {llm_label}: {description}")
+        connectors_text = "\n".join(available_sources)
+
         context_ids = selected_agent.get("context", [])
 
         context_docs = []
+        context_text = ""
         for context_entry_id in context_ids:
             entry_doc = knowledge_db.find_one({"_id": ObjectId(context_entry_id)})
+            filename = "_".join(entry_doc.get("file_key", "").split("_")[1:]) if entry_doc.get("file_key") else ""
+            if entry_doc.get("is_tabular", False):
+                entry_exp = "The data is structured an tabular, it is likely a list that you have access to, treat it as such."
+            else:
+                entry_exp = "The data is text, it is likely a document that you have access to, treat it as such."
+            
+            context_text += f"📄 Document: '{filename}'\n{entry_doc.get('text', '')}\n{entry_exp}\n"
             if entry_doc and "chunks" in entry_doc:
                 context_docs.extend(entry_doc["chunks"])
 
@@ -227,8 +243,15 @@ async def get_agent_graph(
 
             You have a context window of relevant information retrieved from the organization's knowledge base.
             Use this information to help you answer user questions. If the context does not contain the information you need first.
-            Relevant context retrieved from organization's knowledge base:
+            This is the context you have access to:
+            {context_text}
+
+            Relevant context retrieved for this specific question from the context you have:
             {relevant_context}
+
+            You also have access to specialized tools and connectors to help you find information and perform actions.
+            Here are the available tools and connectors you can use:
+            {connectors_text}
 
             When the information you need is not in the context, you can use the specialized connectors available to you.
             If you need to use a connector, decide which tool is most appropriate for the task and use it.
