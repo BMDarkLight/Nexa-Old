@@ -9,28 +9,89 @@ import re
 import importlib
 import logging
 import unidecode
+import pandas as pd
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
 from api.database import agents_db, connectors_db, knowledge_db
 
 
-def retrieve_relevant_context(question: list, context_docs: List[Dict[str, Any]], top_n: int = 3) -> str:
+def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str, Any]], top_n: int = 3) -> str:
     if not context_docs or not question:
         return ""
 
-    question_emb = embed_question(question)
+    question_text = question if isinstance(question, str) else " ".join(question)
+    try:
+        question_emb = embed_question(question_text)
+    except Exception as e:
+        logging.error(f"Failed to embed question: {e}")
+        return ""
+
     scored_docs = []
-    for doc in context_docs:
-        doc_emb = doc.get("embedding")
-        if doc_emb:
+
+    for idx, doc in enumerate(context_docs):
+        try:
+            if doc.get("is_tabular"):
+                structured_data = doc.get("structured_data", {})
+                if not structured_data:
+                    continue
+
+                df = pd.DataFrame(structured_data.get("sample", []))
+                if df.empty:
+                    continue
+
+                table_text = df.head(10).to_string(index=False)
+                table_emb = embed_question(table_text)
+                score = similarity(question_emb, table_emb)
+
+                keywords = re.findall(r'\b[A-Za-z0-9_]+\b', question_text.lower())
+                matching_columns = [col for col in df.columns if any(k in col.lower() for k in keywords)]
+
+                if matching_columns:
+                    filtered_df = df[df[matching_columns].apply(lambda row: any(
+                        str(v).lower() in question_text.lower() for v in row.values
+                    ), axis=1)]
+                else:
+                    filtered_df = df.head(5)
+
+                preview_rows = min(10, len(filtered_df))
+                filtered_preview = filtered_df.head(preview_rows).to_string(index=False)
+
+                filename = "_".join(doc.get("file_key", "").split("_")[1:]) if doc.get("file_key") else "unknown"
+
+                context_text = (
+                    f"📊 Relevant data from '{filename}':\n"
+                    f"{filtered_preview}\n\n"
+                    f"Columns: {', '.join(df.columns[:8])}"
+                )
+
+                scored_docs.append((score, {"text": context_text}))
+                continue
+
+            text_chunks = [chunk.get("text", "") for chunk in doc.get("chunks", [])]
+            combined_text = "\n".join(text_chunks)
+            if not combined_text.strip():
+                continue
+
+            doc_emb = doc.get("embedding")
+            if not doc_emb:
+                doc_emb = embed_question(combined_text[:2000])
+
             score = similarity(question_emb, doc_emb)
-            scored_docs.append((score, doc))
+            scored_docs.append((score, {"text": combined_text}))
+
+        except Exception as e:
+            logging.error(f"Error processing document #{idx}: {e}")
+
+    if not scored_docs:
+        return ""
 
     scored_docs.sort(reverse=True, key=lambda x: x[0])
     top_docs = [doc for _, doc in scored_docs[:top_n]]
+    final_context = "\n\n".join(doc.get("text", "") for doc in top_docs if doc.get("text"))
+    logging.info(f"Returning {len(top_docs)} context entries (including tabular retrieval).")
 
-    return "\n".join(doc.get("text", "") for doc in top_docs)
+    return final_context
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     name_ascii = unidecode.unidecode(name)

@@ -218,12 +218,6 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
             if not table_data:
                 logger.error("No extractable table data in Excel.")
                 raise HTTPException(status_code=400, detail="The uploaded Excel document contains no extractable table data.")
-            summary_text = f"Table with schema: {json.dumps(table_data.get('schema', {}))}, shape: {table_data.get('shape', '')}"
-            chunks_with_embeddings = embed(summary_text)
-            logger.info(f"Generated embeddings for Excel summary: {len(chunks_with_embeddings)} chunks")
-            if not chunks_with_embeddings:
-                logger.error("Failed to generate embeddings for Excel summary.")
-                raise HTTPException(status_code=500, detail="Failed to generate embeddings for the document summary.")
             file_key = f"context_files/{str(ObjectId())}_{file.filename}"
             minio_client.put_object(
                 bucket_name="context-files",
@@ -233,25 +227,29 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
                 content_type=content_type
             )
             logger.info(f"Saved Excel to MinIO with key {file_key}")
-            context_id = save_embedding(chunks_with_embeddings, ObjectId(user["organization"]))
-            logger.info(f"Saved Excel embeddings to DB with context_id={context_id}")
+            # Prepare schema, sample, shape
+            schema = table_data.get("schema", {})
+            sample = table_data.get("sample", [])[:10]  # first 10 rows (or less)
+            shape = table_data.get("shape", ())
+            doc = {
+                "file_key": file_key,
+                "is_tabular": True,
+                "org": ObjectId(user["organization"]),
+                "structured_data": {
+                    "schema": schema,
+                    "sample": sample,
+                    "shape": shape
+                }
+            }
+            result = knowledge_db.insert_one(doc)
+            context_id = result.inserted_id
             is_tabular = True
-            knowledge_db.update_one(
-                {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": True}}
-            )
-            logger.info(f"Updated knowledge_db for Excel context {context_id}")
+            logger.info(f"Inserted Excel structured data to DB with context_id={context_id}")
         elif content_type == "text/csv":
             table_data = extract_table_from_csv(file_content)
             if not table_data:
                 logger.error("No extractable table data in CSV.")
                 raise HTTPException(status_code=400, detail="The uploaded CSV document contains no extractable table data.")
-            summary_text = f"Table with schema: {json.dumps(table_data.get('schema', {}))}, shape: {table_data.get('shape', '')}"
-            chunks_with_embeddings = embed(summary_text)
-            logger.info(f"Generated embeddings for CSV summary: {len(chunks_with_embeddings)} chunks")
-            if not chunks_with_embeddings:
-                logger.error("Failed to generate embeddings for CSV summary.")
-                raise HTTPException(status_code=500, detail="Failed to generate embeddings for the document summary.")
             file_key = f"context_files/{str(ObjectId())}_{file.filename}"
             minio_client.put_object(
                 bucket_name="context-files",
@@ -261,14 +259,23 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
                 content_type=content_type
             )
             logger.info(f"Saved CSV to MinIO with key {file_key}")
-            context_id = save_embedding(chunks_with_embeddings, ObjectId(user["organization"]))
-            logger.info(f"Saved CSV embeddings to DB with context_id={context_id}")
+            schema = table_data.get("schema", {})
+            sample = table_data.get("sample", [])[:10]
+            shape = table_data.get("shape", ())
+            doc = {
+                "file_key": file_key,
+                "is_tabular": True,
+                "org": ObjectId(user["organization"]),
+                "structured_data": {
+                    "schema": schema,
+                    "sample": sample,
+                    "shape": shape
+                }
+            }
+            result = knowledge_db.insert_one(doc)
+            context_id = result.inserted_id
             is_tabular = True
-            knowledge_db.update_one(
-                {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": True}}
-            )
-            logger.info(f"Updated knowledge_db for CSV context {context_id}")
+            logger.info(f"Inserted CSV structured data to DB with context_id={context_id}")
         else:
             logger.error(f"Unsupported file type: {content_type}")
             raise HTTPException(status_code=400, detail="Unsupported file type.")
@@ -278,14 +285,24 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
         )
         logger.info(f"Updated agent {agent_id} with new context {context_id}")
         logger.info(f"Returning success response for context_id={context_id}")
-        return JSONResponse(
-            status_code=201,
-            content={
-                "message": "Context uploaded and processed successfully.",
-                "context_id": str(context_id),
-                "is_tabular": is_tabular
-            }
-        )
+        if is_tabular:
+            return JSONResponse(
+                status_code=201,
+                content={
+                    "message": "Context uploaded and processed successfully.",
+                    "context_id": str(context_id),
+                    "is_tabular": True
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=201,
+                content={
+                    "message": "Context uploaded and processed successfully.",
+                    "context_id": str(context_id),
+                    "is_tabular": False
+                }
+            )
     except HTTPException:
         raise
     except Exception as e:
