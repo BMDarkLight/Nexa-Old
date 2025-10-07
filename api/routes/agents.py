@@ -8,7 +8,7 @@ import datetime
 import logging
 
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry, replace_chat_history_from_point
-from api.database import sessions_db, agents_db, connectors_db, knowledge_db
+from api.database import sessions_db, agents_db, connectors_db, minio_client
 from api.agent import get_agent_graph
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate, agent_doc_to_model
 from api.embed import delete_embeddings
@@ -571,7 +571,14 @@ def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
     try:
         context_entries = agent.get("context", [])
         for entry in context_entries:
+            file_key = entry.get("file_key")
+            if file_key:
+                try:
+                    minio_client.remove_object(bucket_name="context-files", object_name=file_key)
+                except Exception:
+                    pass
             delete_embeddings(entry, ObjectId(user["organization"]))
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete associated knowledge entries: {str(e)}")
     
