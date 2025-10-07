@@ -45,7 +45,7 @@ def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
                         "is_tabular": entry.get("is_tabular", False),
                         "structured_data": entry.get("structured_data"),
                         "created_at": str(entry.get("created_at", "")),
-                        "filename": entry.get("file_key", "").split("_", 1)[-1] if entry.get("file_key") else "",
+                        "filename": "_".join(entry.get("file_key", "").split("_")[1:]) if entry.get("file_key") else "",
                     })
             except Exception as inner_e:
                 logger.warning(f"Skipping invalid context ID {cid}: {inner_e}")
