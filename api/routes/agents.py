@@ -16,6 +16,9 @@ from api.auth import verify_token, oauth2_scheme
 
 router = APIRouter(tags=["Agent"])
 
+logger = logging.getLogger("agent_delete")
+logger.setLevel(logging.INFO)
+
 def _prepare_astream_input(graph, system_content, chat_history, query_text):
     """
     Prepares the input messages for agent streaming.
@@ -561,33 +564,46 @@ def update_agent(agent_id: str, agent_update: AgentUpdate, token: str = Depends(
 def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
     if user.get("permission") != "orgadmin":
+        logger.warning(f"User {user['_id']} tried to delete agent without permission")
         raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can delete agents.")
+    
     if not ObjectId.is_valid(agent_id):
+        logger.error(f"Invalid agent ID format: {agent_id}")
         raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+
     agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
     if not agent:
+        logger.warning(f"Agent not found or access denied for agent_id={agent_id}")
         raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
     
     try:
         context_entries = agent.get("context", [])
+        logger.info(f"Deleting {len(context_entries)} context entries for agent {agent_id}")
         for entry in context_entries:
             file_key = entry.get("file_key")
             if file_key:
                 try:
                     minio_client.remove_object(bucket_name="context-files", object_name=file_key)
-                except Exception:
-                    pass
-            delete_embeddings(entry, ObjectId(user["organization"]))
-            
+                    logger.info(f"Removed file {file_key} from Minio")
+                except Exception as e:
+                    logger.error(f"Failed to remove file {file_key} from Minio: {str(e)}")
+            try:
+                delete_embeddings(entry, ObjectId(user["organization"]))
+                logger.info(f"Deleted embeddings for context entry {entry}")
+            except Exception as e:
+                logger.error(f"Failed to delete embeddings for context entry {entry}: {str(e)}")
     except Exception as e:
+        logger.exception(f"Failed while deleting associated context for agent {agent_id}")
         raise HTTPException(status_code=500, detail=f"Failed to delete associated knowledge entries: {str(e)}")
     
-    result = agents_db.delete_one({
-        "_id": ObjectId(agent_id),
-        "org": ObjectId(user["organization"])
-    })
-
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
+    try:
+        result = agents_db.delete_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
+        if result.deleted_count == 0:
+            logger.error(f"Failed to delete agent {agent_id}")
+            raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
+    except Exception as e:
+        logger.exception(f"Unexpected error when deleting agent {agent_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete agent: {str(e)}")
     
+    logger.info(f"Agent {agent_id} deleted successfully")
     return {"message": f"Agent '{agent_id}' deleted successfully."}
