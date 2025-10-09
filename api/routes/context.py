@@ -212,11 +212,14 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
         elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
             logger.error("PowerPoint upload not supported.")
             raise HTTPException(status_code=400, detail="Support for PowerPoint not implemented yet.")
-        elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-            table_data = extract_table_from_excel(file_content)
+        elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or content_type == "text/csv":
+            if content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                table_data = extract_table_from_excel(file_content)
+            else:
+                table_data = extract_table_from_csv(file_content)
             if not table_data:
-                logger.error("No extractable table data in Excel.")
-                raise HTTPException(status_code=400, detail="The uploaded Excel document contains no extractable table data.")
+                logger.error("No extractable table data in spreadsheet.")
+                raise HTTPException(status_code=400, detail="The uploaded spreadsheet contains no extractable table data.")
             file_key = f"context_files/{str(ObjectId())}_{file.filename}"
             minio_client.put_object(
                 bucket_name="context-files",
@@ -225,56 +228,60 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
                 length=len(file_content),
                 content_type=content_type
             )
-            logger.info(f"Saved Excel to MinIO with key {file_key}")
-            # Prepare schema, sample, shape
-            schema = table_data.get("schema", {})
-            sample = table_data.get("sample", [])[:10]  # first 10 rows (or less)
-            shape = table_data.get("shape", ())
-            doc = {
-                "file_key": file_key,
-                "is_tabular": True,
-                "org": ObjectId(user["organization"]),
-                "structured_data": {
-                    "schema": schema,
-                    "sample": sample,
-                    "shape": shape
-                }
-            }
-            result = knowledge_db.insert_one(doc)
-            context_id = result.inserted_id
-            is_tabular = True
-            logger.info(f"Inserted Excel structured data to DB with context_id={context_id}")
-        elif content_type == "text/csv":
-            table_data = extract_table_from_csv(file_content)
-            if not table_data:
-                logger.error("No extractable table data in CSV.")
-                raise HTTPException(status_code=400, detail="The uploaded CSV document contains no extractable table data.")
-            file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            logger.info(f"Saved CSV to MinIO with key {file_key}")
+            logger.info(f"Saved spreadsheet to MinIO with key {file_key}")
             schema = table_data.get("schema", {})
             sample = table_data.get("sample", [])[:10]
             shape = table_data.get("shape", ())
-            doc = {
-                "file_key": file_key,
-                "is_tabular": True,
-                "org": ObjectId(user["organization"]),
-                "structured_data": {
-                    "schema": schema,
-                    "sample": sample,
-                    "shape": shape
+            dataframe = table_data.get("dataframe")
+            row_chunks = []
+            if dataframe is not None:
+                for idx, row in dataframe.iterrows():
+                    row_text = "; ".join([f"{col}: {row[col]}" for col in dataframe.columns])
+                    row_chunks.append(row_text)
+            else:
+                logger.warning("No dataframe found in table_data; skipping row chunk embedding.")
+            chunks_with_embeddings = []
+            if row_chunks:
+                for row_text in row_chunks:
+                    chunks_with_embeddings.extend(embed(row_text))
+                logger.info(f"Generated embeddings for {len(row_chunks)} spreadsheet rows.")
+            else:
+                logger.warning("No row chunks to embed for spreadsheet.")
+            if chunks_with_embeddings:
+                context_id = save_embedding(
+                    chunks_with_embeddings,
+                    ObjectId(user["organization"]),
+                    file_key=file_key,
+                    is_tabular=True
+                )
+                logger.info(f"Saved spreadsheet row embeddings to DB with context_id={context_id}")
+                knowledge_db.update_one(
+                    {"_id": context_id},
+                    {"$set": {
+                        "file_key": file_key,
+                        "is_tabular": True,
+                        "structured_data": {
+                            "schema": schema,
+                            "sample": sample,
+                            "shape": shape
+                        }
+                    }}
+                )
+            else:
+                doc = {
+                    "file_key": file_key,
+                    "is_tabular": True,
+                    "org": ObjectId(user["organization"]),
+                    "structured_data": {
+                        "schema": schema,
+                        "sample": sample,
+                        "shape": shape
+                    }
                 }
-            }
-            result = knowledge_db.insert_one(doc)
-            context_id = result.inserted_id
+                result = knowledge_db.insert_one(doc)
+                context_id = result.inserted_id
+                logger.info(f"Inserted spreadsheet structured data to DB with context_id={context_id} (no row embeddings)")
             is_tabular = True
-            logger.info(f"Inserted CSV structured data to DB with context_id={context_id}")
         else:
             logger.error(f"Unsupported file type: {content_type}")
             raise HTTPException(status_code=400, detail="Unsupported file type.")

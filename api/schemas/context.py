@@ -46,16 +46,35 @@ def extract_text_from_docx(file_content: bytes) -> str:
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=f"Failed to extract text from DOCX file: {e}")
 
+def _load_spreadsheet(file_content: bytes, file_type: str) -> pd.DataFrame:
+    if file_type == 'excel':
+        return pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+    elif file_type == 'csv':
+        return pd.read_csv(io.BytesIO(file_content))
+    else:
+        raise ValueError(f"Unsupported file type: {file_type}")
+
 def extract_text_from_excel(file_content: bytes) -> str:
     logger.info("Starting extraction of text from Excel file.")
     try:
-        excel_data = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
-        logger.debug(f"Excel columns: {list(excel_data.columns)}")
-        text = ""
-        for col in excel_data.columns:
-            text += col + "\n"
-            text += "\n".join(excel_data[col].dropna().astype(str).tolist()) + "\n"
-        logger.info(f"Successfully extracted text from Excel file. Extracted text length: {len(text)} characters, Columns: {len(excel_data.columns)}, Rows: {len(excel_data)}")
+        df = _load_spreadsheet(file_content, 'excel')
+        num_columns = len(df.columns)
+        num_rows = len(df)
+        logger.debug(f"Excel columns: {list(df.columns)}")
+        text_lines = []
+
+        # Add headers
+        headers = [str(col).strip() for col in df.columns]
+        text_lines.append("\t".join(headers))
+
+        # Add first 5 rows or fewer
+        sample_rows = df.head(5)
+        for _, row in sample_rows.iterrows():
+            row_values = [str(val).strip() if pd.notnull(val) else '' for val in row]
+            text_lines.append("\t".join(row_values))
+
+        text = "\n".join(text_lines) + "\n"
+        logger.info(f"Successfully extracted text from Excel file. Extracted text length: {len(text)} characters, Columns: {num_columns}, Rows: {num_rows}")
         return text
     except Exception as e:
         logger.error(f"Failed to extract text from Excel file: {e}", exc_info=True)
@@ -65,13 +84,24 @@ def extract_text_from_excel(file_content: bytes) -> str:
 def extract_text_from_csv(file_content: bytes) -> str:
     logger.info("Starting extraction of text from CSV file.")
     try:
-        csv_data = pd.read_csv(io.BytesIO(file_content))
-        logger.debug(f"CSV columns: {list(csv_data.columns)}")
-        text = ""
-        for col in csv_data.columns:
-            text += col + "\n"
-            text += "\n".join(csv_data[col].dropna().astype(str).tolist()) + "\n"
-        logger.info(f"Successfully extracted text from CSV file. Extracted text length: {len(text)} characters, Columns: {len(csv_data.columns)}, Rows: {len(csv_data)}")
+        df = _load_spreadsheet(file_content, 'csv')
+        num_columns = len(df.columns)
+        num_rows = len(df)
+        logger.debug(f"CSV columns: {list(df.columns)}")
+        text_lines = []
+
+        # Add headers
+        headers = [str(col).strip() for col in df.columns]
+        text_lines.append("\t".join(headers))
+
+        # Add first 5 rows or fewer
+        sample_rows = df.head(5)
+        for _, row in sample_rows.iterrows():
+            row_values = [str(val).strip() if pd.notnull(val) else '' for val in row]
+            text_lines.append("\t".join(row_values))
+
+        text = "\n".join(text_lines) + "\n"
+        logger.info(f"Successfully extracted text from CSV file. Extracted text length: {len(text)} characters, Columns: {num_columns}, Rows: {num_rows}")
         return text
     except Exception as e:
         logger.error(f"Failed to extract text from CSV file: {e}", exc_info=True)
@@ -81,12 +111,14 @@ def extract_text_from_csv(file_content: bytes) -> str:
 def extract_table_from_excel(file_content: bytes) -> Dict[str, Any]:
     logger.info("Starting extraction of table from Excel file.")
     try:
-        df = pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
+        df = _load_spreadsheet(file_content, 'excel')
+        num_columns = len(df.columns)
+        num_rows = len(df)
         logger.debug(f"Excel DataFrame columns: {list(df.columns)}, shape: {df.shape}")
         schema = {col: str(dtype) for col, dtype in df.dtypes.items()}
         sample = df.head(5).to_dict(orient='records')
         shape = df.shape
-        logger.info(f"Successfully extracted table from Excel file. Columns: {len(df.columns)}, Rows: {len(df)}")
+        logger.info(f"Successfully extracted table from Excel file. Columns: {num_columns}, Rows: {num_rows}")
         return {
             "schema": schema,
             "sample": sample,
@@ -101,12 +133,14 @@ def extract_table_from_excel(file_content: bytes) -> Dict[str, Any]:
 def extract_table_from_csv(file_content: bytes) -> Dict[str, Any]:
     logger.info("Starting extraction of table from CSV file.")
     try:
-        df = pd.read_csv(io.BytesIO(file_content))
+        df = _load_spreadsheet(file_content, 'csv')
+        num_columns = len(df.columns)
+        num_rows = len(df)
         logger.debug(f"CSV DataFrame columns: {list(df.columns)}, shape: {df.shape}")
         schema = {col: str(dtype) for col, dtype in df.dtypes.items()}
         sample = df.head(5).to_dict(orient='records')
         shape = df.shape
-        logger.info(f"Successfully extracted table from CSV file. Columns: {len(df.columns)}, Rows: {len(df)}")
+        logger.info(f"Successfully extracted table from CSV file. Columns: {num_columns}, Rows: {num_rows}")
         return {
             "schema": schema,
             "sample": sample,

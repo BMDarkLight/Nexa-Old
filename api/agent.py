@@ -367,12 +367,12 @@ async def get_agent_graph(
             filename = "_".join(entry_doc.get("file_key", "").split("_")[1:]) if entry_doc.get("file_key") else ""
             if entry_doc.get("is_tabular", False):
                 entry_exp = "The data is structured an tabular, Use the provided rows to answer questions accurately.\n"
+                context_docs.append(entry_doc)
             else:
                 entry_exp = "The data is text, it is likely a document that you have access to, َUse the provided context from the file to answer question accordingly.\n"
-            
+                if entry_doc and "chunks" in entry_doc:
+                    context_docs.extend(entry_doc["chunks"])
             context_text += f"📄 Document: '{filename}'\n{entry_doc.get('text', '')}\n{entry_exp}\n"
-            if entry_doc and "chunks" in entry_doc:
-                context_docs.extend(entry_doc["chunks"])
 
         relevant_context = retrieve_relevant_context(question, context_docs)
 
