@@ -8,7 +8,7 @@ from bson import ObjectId
 
 import re
 import io
-import heapq
+import string
 import importlib
 import logging
 import unidecode
@@ -25,6 +25,25 @@ class LoggingChatOpenAI(ChatOpenAI):
 
     def generate(self, messages, *args, **kwargs):
         return super().generate(messages, *args, **kwargs)
+
+def _normalize_text(text):
+    text = str(text).lower()
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    text = text.strip()
+    return text
+
+def _split_to_norm_words(s):
+    s = _normalize_text(s)
+    return set(re.split(r"\s+", s))
+
+def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
+    name_ascii = unidecode.unidecode(name)
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', name_ascii)
+    sanitized = re.sub(r'_+', '_', sanitized)
+    sanitized = sanitized.strip('_')
+    tool_name = f"{prefix}_{sanitized}".lower()
+    llm_label = name.strip()
+    return {"tool_name": tool_name, "llm_label": llm_label}
 
 def retrieve_relevant_context(
     question: str | list,
@@ -71,19 +90,32 @@ def retrieve_relevant_context(
                     continue
 
                 rows_as_text = []
+                rows_as_columns = []
                 try:
                     if file_key.lower().endswith(".csv"):
                         df_iter = pd.read_csv(io.BytesIO(file_bytes), chunksize=1000)
                         for chunk in df_iter:
                             for _, row in chunk.iterrows():
-                                row_str = " | ".join([f"{col}: {val}" for col, val in row.items()])
-                                rows_as_text.append(row_str)
+                                row_strs = []
+                                row_cols = []
+                                for col, val in row.items():
+                                    col_val_str = f"{col}: {val}"
+                                    row_strs.append(col_val_str)
+                                    row_cols.append((col, val, col_val_str))
+                                rows_as_text.append(" | ".join(row_strs))
+                                rows_as_columns.append(row_cols)
                         logging.info(f"Extracted {len(rows_as_text)} rows from CSV {file_key}.")
                     elif file_key.lower().endswith((".xls", ".xlsx")):
                         df = pd.read_excel(io.BytesIO(file_bytes))
                         for _, row in df.iterrows():
-                            row_str = " | ".join([f"{col}: {val}" for col, val in row.items()])
-                            rows_as_text.append(row_str)
+                            row_strs = []
+                            row_cols = []
+                            for col, val in row.items():
+                                col_val_str = f"{col}: {val}"
+                                row_strs.append(col_val_str)
+                                row_cols.append((col, val, col_val_str))
+                            rows_as_text.append(" | ".join(row_strs))
+                            rows_as_columns.append(row_cols)
                         logging.info(f"Extracted {len(rows_as_text)} rows from Excel {file_key}.")
                     else:
                         logging.warning(f"Unknown tabular file format for {file_key}. Skipping.")
@@ -93,12 +125,35 @@ def retrieve_relevant_context(
                     continue
 
                 row_similarities = []
-                for row_idx, row_text in enumerate(rows_as_text):
+                norm_question = _normalize_text(question_text)
+                
+                question_norm_words = _split_to_norm_words(question_text)
+                exact_match_rows = set()
+                for row_idx, (row_text, row_cols) in enumerate(zip(rows_as_text, rows_as_columns)):
                     try:
-                        row_emb = embed_question(row_text)
-                        sim = similarity(question_emb, row_emb)
-                        row_similarities.append((sim, row_text))
-                        logging.debug(f"[Tabular] file_key={file_key} row_idx={row_idx} similarity={sim:.4f}")
+                        max_col_sim = None
+                        max_col_val = None
+                        col_sim_details = []
+                        row_exact_match = False
+                        for col, val, col_val_str in row_cols:
+                            norm_col_val = _normalize_text(val)
+                            boost = 0.0
+                            if norm_col_val and norm_col_val in question_norm_words:
+                                boost = 0.5
+                                row_exact_match = True
+                            elif norm_col_val and norm_col_val in norm_question:
+                                boost = 0.2
+                            col_emb = embed_question(col_val_str)
+                            sim = similarity(question_emb, col_emb)
+                            sim += boost
+                            col_sim_details.append((sim, col_val_str, boost))
+                            if max_col_sim is None or sim > max_col_sim:
+                                max_col_sim = sim
+                                max_col_val = col_val_str
+                        if row_exact_match:
+                            exact_match_rows.add(row_idx)
+                        row_similarities.append((max_col_sim, row_text, row_exact_match))
+                        logging.debug(f"[Tabular] file_key={file_key} row_idx={row_idx} max_col_sim={max_col_sim:.4f} | max_col_val={max_col_val} | col_sim_details={col_sim_details} | exact_match={row_exact_match}")
                         if row_idx % 100 == 0:
                             logging.debug(f"Processed {row_idx+1}/{len(rows_as_text)} rows for {file_key}.")
                     except Exception as e:
@@ -110,8 +165,12 @@ def retrieve_relevant_context(
                 row_similarities.sort(reverse=True, key=lambda x: x[0])
                 top_rows_actual = row_similarities[:top_rows]
                 filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
-                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row in top_rows_actual)
-                
+                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row, _ in top_rows_actual)
+
+                for sim, row, is_exact in top_rows_actual:
+                    if is_exact:
+                        logging.info(f"Tabular retrieval [EXACT MATCH]: file={file_key} row='{row}'")
+
                 max_score = top_rows_actual[0][0] if top_rows_actual else 0
                 tabular_rows_scored.append((max_score, context_text))
                 logging.info(f"Selected {len(top_rows_actual)} top rows from tabular file {file_key}.")
@@ -174,15 +233,6 @@ def retrieve_relevant_context(
     logging.info(f"Returning {len(selected_contexts)} context entries (text and/or tabular): "
                  f"text_chunks={num_text_chunks_selected}, tabular_groups={num_tabular_groups_selected}")
     return final_context
-
-def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
-    name_ascii = unidecode.unidecode(name)
-    sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', name_ascii)
-    sanitized = re.sub(r'_+', '_', sanitized)
-    sanitized = sanitized.strip('_')
-    tool_name = f"{prefix}_{sanitized}".lower()
-    llm_label = name.strip()
-    return {"tool_name": tool_name, "llm_label": llm_label}
 
 @traceable
 async def get_agent_graph(
