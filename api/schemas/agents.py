@@ -1,6 +1,9 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, TypedDict, Literal, Any, Dict
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
+from langchain.callbacks.base import BaseCallbackHandler
+
+import logging
 
 from api.schemas.base import PyObjectId
 from api.database import sessions_db
@@ -58,6 +61,25 @@ class AgentUpdate(BaseModel):
     tools: Optional[List[Tools]] = None
     connector_ids: Optional[List[PyObjectId]] = None
     context: Optional[List[PyObjectId]] = None
+
+class TokenCountingCallbackHandler(BaseCallbackHandler):
+    def __init__(self):
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+
+    def on_llm_new_token(self, token: str, **kwargs):
+        self.completion_tokens += 1
+        self.total_tokens += 1
+
+    def on_llm_end(self, response=None, **kwargs):
+        if response is None:
+            logging.warning("TokenCountingCallbackHandler.on_llm_end called with None response.")
+            return
+        usage = getattr(response, "llm_output", {}) or {}
+        self.prompt_tokens += usage.get("prompt_tokens", 0)
+        self.total_tokens += usage.get("total_tokens", 0)
+        logging.info(f"Token usage — Prompt: {self.prompt_tokens}, Completion: {self.completion_tokens}, Total: {self.total_tokens}")
 
 def save_chat_history(session_id: str, user_id: str, chat_history: list, query: str, answer: str, agent_id: str, agent_name: str):
     new_history_entry = {

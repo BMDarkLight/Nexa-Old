@@ -2,7 +2,6 @@ from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
@@ -16,29 +15,9 @@ import unidecode
 import pandas as pd
 
 from api.embed import similarity, embed_question
-from api.schemas.agents import convert_messages_to_dict
+from api.schemas.agents import convert_messages_to_dict, TokenCountingCallbackHandler
 from api.database import agents_db, connectors_db, knowledge_db, minio_client
 
-
-# Token-counting callback for streaming LLMs
-class TokenCountingCallbackHandler(BaseCallbackHandler):
-    def __init__(self):
-        self.prompt_tokens = 0
-        self.completion_tokens = 0
-        self.total_tokens = 0
-
-    def on_llm_new_token(self, token: str, **kwargs):
-        self.completion_tokens += 1
-        self.total_tokens += 1
-
-    def on_llm_end(self, response=None, **kwargs):
-        if response is None:
-            logging.warning("TokenCountingCallbackHandler.on_llm_end called with None response.")
-            return
-        usage = getattr(response, "llm_output", {}) or {}
-        self.prompt_tokens += usage.get("prompt_tokens", 0)
-        self.total_tokens += usage.get("total_tokens", 0)
-        logging.info(f"Token usage — Prompt: {self.prompt_tokens}, Completion: {self.completion_tokens}, Total: {self.total_tokens}")
 
 class LoggingChatOpenAI(ChatOpenAI):
     async def agenerate(self, messages, *args, **kwargs):
@@ -47,85 +26,153 @@ class LoggingChatOpenAI(ChatOpenAI):
     def generate(self, messages, *args, **kwargs):
         return super().generate(messages, *args, **kwargs)
 
-def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str, Any]], top_n: int = 3, top_rows: int = 10) -> str:
+def retrieve_relevant_context(
+    question: str | list,
+    context_docs: List[Dict[str, Any]],
+    top_n: int = 3,
+    top_rows: int = 10,
+) -> str:
+    """
+    Retrieve the most relevant context from a list of context_docs for the given question.
+    Handles both tabular and text document chunks. Returns a string of relevant context.
+    """
+    import traceback
     if not context_docs or not question:
-        return ""
+        logging.warning("No context docs or question provided to retrieve_relevant_context.")
+        return "⚠️ No relevant context found for this question."
 
     question_text = question if isinstance(question, str) else " ".join(question)
     try:
         question_emb = embed_question(question_text)
+        logging.info("Successfully embedded the question.")
     except Exception as e:
-        logging.error(f"Failed to embed question: {e}")
-        return ""
+        logging.error(f"Failed to embed question: {e}\n{traceback.format_exc()}")
+        return "⚠️ No relevant context found for this question."
 
-    scored_docs = []
+    tabular_rows_scored = []
+    text_chunks_scored = []
 
     for idx, doc in enumerate(context_docs):
         try:
-            if doc.get("is_tabular"):
-                file_key = doc.get("file_key")
+            doc_is_tabular = doc.get("is_tabular", False)
+            file_key = doc.get("file_key", None)
+            logging.debug(f"[Doc #{idx}] file_key: {file_key} | is_tabular: {doc_is_tabular}")
+            if doc_is_tabular:
                 if not file_key:
+                    logging.warning(f"Tabular doc #{idx} missing file_key.")
                     continue
-
-                row_scores = []
-
+                logging.info(f"Processing tabular file: {file_key}")
                 try:
                     obj = minio_client.get_object(bucket_name="context-files", object_name=file_key)
-
-                    if file_key.endswith(".csv"):
-                        for chunk in pd.read_csv(io.BytesIO(obj.read()), chunksize=500):
-                            for _, row in chunk.iterrows():
-                                row_text = " | ".join([f"{col}: {val}" for col, val in row.items()])
-                                row_emb = embed_question(row_text)
-                                score = similarity(question_emb, row_emb)
-                                heapq.heappush(row_scores, (score, row_text))
-                                if len(row_scores) > top_rows:
-                                    heapq.heappop(row_scores)
-
-                    elif file_key.endswith((".xls", ".xlsx")):
-                        df = pd.read_excel(io.BytesIO(obj.read()))
-                        for _, row in df.iterrows():
-                            row_text = " | ".join([f"{col}: {val}" for col, val in row.items()])
-                            row_emb = embed_question(row_text)
-                            score = similarity(question_emb, row_emb)
-                            heapq.heappush(row_scores, (score, row_text))
-                            if len(row_scores) > top_rows:
-                                heapq.heappop(row_scores)
-
+                    file_bytes = obj.read()
+                    logging.info(f"Successfully read file {file_key} from MinIO.")
                 except Exception as e:
-                    logging.error(f"Failed to load tabular file {file_key}: {e}")
+                    logging.error(f"Failed to load tabular file {file_key}: {e}\n{traceback.format_exc()}")
                     continue
 
-                if not row_scores:
+                rows_as_text = []
+                try:
+                    if file_key.lower().endswith(".csv"):
+                        df_iter = pd.read_csv(io.BytesIO(file_bytes), chunksize=1000)
+                        for chunk in df_iter:
+                            for _, row in chunk.iterrows():
+                                row_str = " | ".join([f"{col}: {val}" for col, val in row.items()])
+                                rows_as_text.append(row_str)
+                        logging.info(f"Extracted {len(rows_as_text)} rows from CSV {file_key}.")
+                    elif file_key.lower().endswith((".xls", ".xlsx")):
+                        df = pd.read_excel(io.BytesIO(file_bytes))
+                        for _, row in df.iterrows():
+                            row_str = " | ".join([f"{col}: {val}" for col, val in row.items()])
+                            rows_as_text.append(row_str)
+                        logging.info(f"Extracted {len(rows_as_text)} rows from Excel {file_key}.")
+                    else:
+                        logging.warning(f"Unknown tabular file format for {file_key}. Skipping.")
+                        continue
+                except Exception as e:
+                    logging.error(f"Failed to parse tabular file {file_key}: {e}\n{traceback.format_exc()}")
                     continue
 
-                row_scores.sort(reverse=True)
-                relevant_rows = [row_text for _, row_text in row_scores]
+                row_similarities = []
+                for row_idx, row_text in enumerate(rows_as_text):
+                    try:
+                        row_emb = embed_question(row_text)
+                        sim = similarity(question_emb, row_emb)
+                        row_similarities.append((sim, row_text))
+                        logging.debug(f"[Tabular] file_key={file_key} row_idx={row_idx} similarity={sim:.4f}")
+                        if row_idx % 100 == 0:
+                            logging.debug(f"Processed {row_idx+1}/{len(rows_as_text)} rows for {file_key}.")
+                    except Exception as e:
+                        logging.error(f"Embedding/similarity error for row {row_idx} in {file_key}: {e}")
+                if not row_similarities:
+                    logging.info(f"No rows found or embedded for tabular file {file_key}.")
+                    continue
+
+                row_similarities.sort(reverse=True, key=lambda x: x[0])
+                top_rows_actual = row_similarities[:top_rows]
                 filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
-                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(relevant_rows)
-                scored_docs.append((max(score for score, _ in row_scores), {"text": context_text}))
+                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row in top_rows_actual)
+                
+                max_score = top_rows_actual[0][0] if top_rows_actual else 0
+                tabular_rows_scored.append((max_score, context_text))
+                logging.info(f"Selected {len(top_rows_actual)} top rows from tabular file {file_key}.")
                 continue
-
-            text_chunks = [chunk.get("text", "") for chunk in doc.get("chunks", [])]
-            combined_text = "\n".join(text_chunks)
-            if not combined_text.strip():
-                continue
-
-            doc_emb = doc.get("embedding") or embed_question(combined_text[:2000])
-            score = similarity(question_emb, doc_emb)
-            scored_docs.append((score, {"text": combined_text}))
-
+            
+            if "chunks" in doc and isinstance(doc["chunks"], list):
+                num_chunks = len(doc["chunks"])
+                logging.debug(f"[Doc #{idx}] has {num_chunks} text chunks.")
+                for cidx, chunk in enumerate(doc["chunks"]):
+                    chunk_text = chunk.get("text", "")
+                    if not chunk_text.strip():
+                        logging.debug(f"Empty chunk text at doc {idx} chunk {cidx}. Skipping.")
+                        continue
+                    try:
+                        chunk_emb = chunk.get("embedding") or embed_question(chunk_text[:2000])
+                        sim = similarity(question_emb, chunk_emb)
+                        text_chunks_scored.append((sim, chunk_text))
+                        logging.debug(f"[Text Chunk] doc_idx={idx} chunk_idx={cidx} similarity={sim:.4f}")
+                    except Exception as e:
+                        logging.error(f"Text chunk embedding/similarity error at doc {idx} chunk {cidx}: {e}")
+            elif doc.get("text"):
+                chunk_text = doc["text"]
+                logging.debug(f"[Doc #{idx}] single text chunk present.")
+                try:
+                    chunk_emb = doc.get("embedding") or embed_question(chunk_text[:2000])
+                    sim = similarity(question_emb, chunk_emb)
+                    text_chunks_scored.append((sim, chunk_text))
+                    logging.debug(f"[Text Chunk] doc_idx={idx} similarity={sim:.4f}")
+                except Exception as e:
+                    logging.error(f"Text doc embedding/similarity error at doc {idx}: {e}")
+            else:
+                logging.debug(f"Doc {idx} has no text or chunks. Skipping.")
         except Exception as e:
-            logging.error(f"Error processing document #{idx}: {e}")
+            logging.error(f"Error processing document #{idx}: {e}\n{traceback.format_exc()}")
 
-    if not scored_docs:
-        return ""
+    selected_contexts = []
+    num_text_chunks_selected = 0
+    num_tabular_groups_selected = 0
 
-    scored_docs.sort(reverse=True, key=lambda x: x[0])
-    top_docs = [doc for _, doc in scored_docs[:top_n]]
-    final_context = "\n\n".join(doc.get("text", "") for doc in top_docs if doc.get("text"))
+    if text_chunks_scored:
+        text_chunks_scored.sort(reverse=True, key=lambda x: x[0])
+        top_text_chunks = text_chunks_scored[:top_n]
+        for sim, text in top_text_chunks:
+            selected_contexts.append(text)
+        num_text_chunks_selected = len(top_text_chunks)
+        logging.info(f"Selected {num_text_chunks_selected} top text chunks.")
 
-    logging.info(f"Returning {len(top_docs)} context entries (including tabular rows).")
+    if tabular_rows_scored:
+        tabular_rows_scored.sort(reverse=True, key=lambda x: x[0])
+        for score, tabular_text in tabular_rows_scored[:top_n]:
+            selected_contexts.append(tabular_text)
+        num_tabular_groups_selected = min(top_n, len(tabular_rows_scored))
+        logging.info(f"Selected {num_tabular_groups_selected} top tabular row groups.")
+
+    if not selected_contexts:
+        logging.warning("No relevant context found for the question after processing.")
+        return "⚠️ No relevant context found for this question."
+
+    final_context = "\n\n".join(selected_contexts)
+    logging.info(f"Returning {len(selected_contexts)} context entries (text and/or tabular): "
+                 f"text_chunks={num_text_chunks_selected}, tabular_groups={num_tabular_groups_selected}")
     return final_context
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
