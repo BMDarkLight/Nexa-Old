@@ -126,8 +126,8 @@ def retrieve_relevant_context(
 
                 row_similarities = []
                 norm_question = _normalize_text(question_text)
-                
                 question_norm_words = _split_to_norm_words(question_text)
+                substring_match_rows = set()
                 exact_match_rows = set()
                 for row_idx, (row_text, row_cols) in enumerate(zip(rows_as_text, rows_as_columns)):
                     try:
@@ -135,14 +135,18 @@ def retrieve_relevant_context(
                         max_col_val = None
                         col_sim_details = []
                         row_exact_match = False
+                        row_substring_match = False
                         for col, val, col_val_str in row_cols:
                             norm_col_val = _normalize_text(val)
                             boost = 0.0
+                            if norm_col_val and norm_question and norm_question in norm_col_val:
+                                boost += 2.0
+                                row_substring_match = True
                             if norm_col_val and norm_col_val in question_norm_words:
-                                boost = 0.5
+                                boost += 0.5
                                 row_exact_match = True
                             elif norm_col_val and norm_col_val in norm_question:
-                                boost = 0.2
+                                boost += 0.2
                             col_emb = embed_question(col_val_str)
                             sim = similarity(question_emb, col_emb)
                             sim += boost
@@ -152,8 +156,14 @@ def retrieve_relevant_context(
                                 max_col_val = col_val_str
                         if row_exact_match:
                             exact_match_rows.add(row_idx)
-                        row_similarities.append((max_col_sim, row_text, row_exact_match))
-                        logging.debug(f"[Tabular] file_key={file_key} row_idx={row_idx} max_col_sim={max_col_sim:.4f} | max_col_val={max_col_val} | col_sim_details={col_sim_details} | exact_match={row_exact_match}")
+                        if row_substring_match:
+                            substring_match_rows.add(row_idx)
+                        row_similarities.append((max_col_sim, row_text, row_exact_match, row_substring_match))
+                        logging.debug(
+                            f"[Tabular] file_key={file_key} row_idx={row_idx} max_col_sim={max_col_sim:.4f} | "
+                            f"max_col_val={max_col_val} | col_sim_details={col_sim_details} | "
+                            f"exact_match={row_exact_match} | substring_match={row_substring_match}"
+                        )
                         if row_idx % 100 == 0:
                             logging.debug(f"Processed {row_idx+1}/{len(rows_as_text)} rows for {file_key}.")
                     except Exception as e:
@@ -165,11 +175,15 @@ def retrieve_relevant_context(
                 row_similarities.sort(reverse=True, key=lambda x: x[0])
                 top_rows_actual = row_similarities[:top_rows]
                 filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
-                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row, _ in top_rows_actual)
+                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row, _, _ in top_rows_actual)
 
-                for sim, row, is_exact in top_rows_actual:
-                    if is_exact:
+                for sim, row, is_exact, is_substring in top_rows_actual:
+                    if is_substring:
+                        logging.info(f"Tabular retrieval [SUBSTRING MATCH]: file={file_key} row='{row}'")
+                    elif is_exact:
                         logging.info(f"Tabular retrieval [EXACT MATCH]: file={file_key} row='{row}'")
+                    else:
+                        logging.info(f"Tabular retrieval [EMBEDDING SIMILARITY]: file={file_key} row='{row}'")
 
                 max_score = top_rows_actual[0][0] if top_rows_actual else 0
                 tabular_rows_scored.append((max_score, context_text))
