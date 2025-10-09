@@ -1,9 +1,8 @@
-from fastapi import Depends, APIRouter, HTTPException, UploadFile, File, status
+from fastapi import Depends, APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from bson import ObjectId
 
 import io
-import json
 import logging
 
 from api.embed import embed, save_embedding, get_embeddings

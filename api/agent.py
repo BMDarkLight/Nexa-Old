@@ -1,7 +1,9 @@
-from langchain_openai import ChatOpenAI
 from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
+from langchain.callbacks.manager import CallbackManager
+from langchain.callbacks.base import BaseCallbackHandler
+from langchain_openai import ChatOpenAI
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
@@ -17,6 +19,33 @@ from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
 from api.database import agents_db, connectors_db, knowledge_db, minio_client
 
+
+# Token-counting callback for streaming LLMs
+class TokenCountingCallbackHandler(BaseCallbackHandler):
+    def __init__(self):
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+
+    def on_llm_new_token(self, token: str, **kwargs):
+        self.completion_tokens += 1
+        self.total_tokens += 1
+
+    def on_llm_end(self, response=None, **kwargs):
+        if response is None:
+            logging.warning("TokenCountingCallbackHandler.on_llm_end called with None response.")
+            return
+        usage = getattr(response, "llm_output", {}) or {}
+        self.prompt_tokens += usage.get("prompt_tokens", 0)
+        self.total_tokens += usage.get("total_tokens", 0)
+        logging.info(f"Token usage — Prompt: {self.prompt_tokens}, Completion: {self.completion_tokens}, Total: {self.total_tokens}")
+
+class LoggingChatOpenAI(ChatOpenAI):
+    async def agenerate(self, messages, *args, **kwargs):
+        return await super().agenerate(messages, *args, **kwargs)
+
+    def generate(self, messages, *args, **kwargs):
+        return super().generate(messages, *args, **kwargs)
 
 def retrieve_relevant_context(question: str | list, context_docs: List[Dict[str, Any]], top_n: int = 3, top_rows: int = 10) -> str:
     if not context_docs or not question:
@@ -279,7 +308,14 @@ async def get_agent_graph(
 
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
-        agent_llm = ChatOpenAI(model=selected_agent["model"], temperature=selected_agent.get("temperature", 0.7), streaming=True, max_retries=3)
+        callback_manager = CallbackManager([TokenCountingCallbackHandler()])
+        agent_llm = LoggingChatOpenAI(
+            model=selected_agent["model"],
+            temperature=selected_agent.get("temperature", 0.7),
+            streaming=True,
+            max_retries=3,
+            callback_manager=callback_manager
+        )
         graph = create_react_agent(agent_llm, active_tools)
         setattr(graph, "_is_react_agent", True)
         graph.system_prompt = system_prompt
@@ -293,7 +329,14 @@ async def get_agent_graph(
             "final_agent_id": str(final_agent_id) if final_agent_id else None,
         }
     else:
-        agent_llm = ChatOpenAI(model="gpt-4o-mini", streaming=True, temperature=0.7, max_retries=3)
+        callback_manager = CallbackManager([TokenCountingCallbackHandler()])
+        agent_llm = LoggingChatOpenAI(
+            model="gpt-4o-mini",
+            streaming=True,
+            temperature=0.7,
+            max_retries=3,
+            callback_manager=callback_manager
+        )
         graph = create_react_agent(agent_llm, tools=[])
         setattr(graph, "_is_react_agent", True)
         system_prompt = f"""
