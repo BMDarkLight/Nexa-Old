@@ -82,16 +82,21 @@ def retrieve_relevant_context(
                     continue
                 logging.info(f"Processing tabular file (precomputed embeddings): {file_key}")
 
-                row_similarities = []
-                for row_doc in context_docs:
-                    if row_doc.get("file_key") == file_key and row_doc.get("embedding"):
-                        row_text = row_doc.get("text", "")
-                        row_emb = row_doc["embedding"]
-                        sim = similarity(question_emb, row_emb)
-                        row_similarities.append((sim, row_text))
-                if not row_similarities:
+                tabular_rows = [
+                    row_doc for row_doc in context_docs
+                    if row_doc.get("file_key") == file_key and row_doc.get("embedding")
+                ]
+                logging.info(f"Found {len(tabular_rows)} rows with embeddings for tabular file {file_key}.")
+                if not tabular_rows:
                     logging.info(f"No rows with embeddings found for tabular file {file_key}.")
                     continue
+
+                row_similarities = []
+                for row_doc in tabular_rows:
+                    row_text = row_doc.get("text", "")
+                    row_emb = row_doc["embedding"]
+                    sim = similarity(question_emb, row_emb)
+                    row_similarities.append((sim, row_text))
 
                 row_similarities.sort(reverse=True, key=lambda x: x[0])
                 top_rows_actual = row_similarities[:top_rows]
@@ -280,14 +285,28 @@ async def get_agent_graph(
         context_text = ""
         for context_entry_id in context_ids:
             entry_doc = knowledge_db.find_one({"_id": ObjectId(context_entry_id)})
+            if not entry_doc:
+                continue
+
             filename = "_".join(entry_doc.get("file_key", "").split("_")[1:]) if entry_doc.get("file_key") else ""
+
             if entry_doc.get("is_tabular", False):
                 entry_exp = "The data is structured an tabular, Use the provided rows to answer questions accurately.\n"
-                context_docs.append(entry_doc)
+                file_key = entry_doc.get("file_key")
+                row_docs = list(knowledge_db.find({
+                    "file_key": file_key,
+                    "is_tabular": True,
+                    "embedding": {"$exists": True},
+                    "text": {"$exists": True}
+                }))
+                context_docs.extend(row_docs)
             else:
                 entry_exp = "The data is text, it is likely a document that you have access to, َUse the provided context from the file to answer question accordingly.\n"
-                if entry_doc and "chunks" in entry_doc:
+                if "chunks" in entry_doc:
                     context_docs.extend(entry_doc["chunks"])
+                elif "text" in entry_doc:
+                    context_docs.append(entry_doc)
+
             context_text += f"📄 Document: '{filename}'\n{entry_doc.get('text', '')}\n{entry_exp}\n"
 
         relevant_context = retrieve_relevant_context(question, context_docs)

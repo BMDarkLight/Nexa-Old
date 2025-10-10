@@ -91,8 +91,7 @@ def process_context_embedding(
                         row_texts.append(row_text)
                 else:
                     logger.warning("No dataframe found in table_data; skipping row embedding.")
-                row_embeddings = []
-                inserted_row_ids = []
+                row_docs = []
                 if row_texts:
                     for row_idx, row_text in enumerate(row_texts):
                         embedding = embed(row_text)
@@ -105,13 +104,18 @@ def process_context_embedding(
                                 "is_tabular": True,
                                 "org": user_org_id
                             }
-                            inserted_id = save_embedding([doc], user_org_id, file_key=file_key, is_tabular=True)
-                            inserted_row_ids.append(inserted_id)
+                            row_docs.append(doc)
                         else:
                             logger.warning(f"Failed to embed row {row_idx} in spreadsheet.")
-                    logger.info(f"Generated and saved embeddings for {len(inserted_row_ids)} spreadsheet rows.")
+                    if row_docs:
+                        result = knowledge_db.insert_many(row_docs)
+                        inserted_row_ids = result.inserted_ids
+                        logger.info(f"Generated and saved embeddings for {len(inserted_row_ids)} spreadsheet rows.")
+                    else:
+                        inserted_row_ids = []
                 else:
                     logger.warning("No row texts to embed for spreadsheet.")
+                    inserted_row_ids = []
                 doc = {
                     "file_key": file_key,
                     "is_tabular": True,
@@ -120,7 +124,8 @@ def process_context_embedding(
                         "schema": schema,
                         "sample": sample,
                         "shape": shape
-                    }
+                    },
+                    "row_ids": inserted_row_ids if inserted_row_ids else []
                 }
                 result = knowledge_db.insert_one(doc)
                 context_id = result.inserted_id
