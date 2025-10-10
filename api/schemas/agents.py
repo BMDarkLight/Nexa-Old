@@ -64,24 +64,52 @@ class AgentUpdate(BaseModel):
 
 class TokenCountingCallbackHandler(BaseCallbackHandler):
     def __init__(self):
+        self.reset()
+
+    def reset(self):
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.total_tokens = 0
 
-    def on_llm_new_token(self, token: str, **kwargs):
-        self.completion_tokens += 1
-        self.total_tokens += 1
+    def on_llm_start(self, *args, **kwargs):
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
 
     def on_llm_end(self, response=None, **kwargs):
-        if response is None:
-            logging.warning("TokenCountingCallbackHandler.on_llm_end called with None response.")
-            return
-        usage = getattr(response, "llm_output", {}) or {}
-        self.prompt_tokens += usage.get("prompt_tokens", 0)
-        self.total_tokens += usage.get("total_tokens", 0)
-        logging.info(f"Token usage — Prompt: {self.prompt_tokens}, Completion: {self.completion_tokens}, Total: {self.total_tokens}")
+        try:
+            if response is None:
+                return
+            llm_output = getattr(response, "llm_output", None)
+            if not isinstance(llm_output, dict):
+                logging.warning(f"TokenCountingCallbackHandler: llm_output is not a dict: {llm_output}")
+                return
+            usage = llm_output.get("token_usage", {})
+            if not isinstance(usage, dict):
+                logging.warning(f"TokenCountingCallbackHandler: token_usage is not a dict: {usage}")
+                return
+            self.prompt_tokens += usage.get("prompt_tokens", 0)
+            self.completion_tokens += usage.get("completion_tokens", 0)
+            self.total_tokens += usage.get("total_tokens", self.prompt_tokens + self.completion_tokens)
+        except Exception as e:
+            logging.exception(f"TokenCountingCallbackHandler.on_llm_end exception: {e}")
 
-def save_chat_history(session_id: str, user_id: str, chat_history: list, query: str, answer: str, agent_id: str, agent_name: str):
+    def get_token_counts(self):
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+        }
+
+def save_chat_history(
+    session_id: str,
+    user_id: str,
+    chat_history: list,
+    query: str,
+    answer: str,
+    agent_id: str,
+    agent_name: str,
+):
     new_history_entry = {
         "user": query,
         "assistant": answer,
@@ -89,9 +117,16 @@ def save_chat_history(session_id: str, user_id: str, chat_history: list, query: 
         "agent_name": agent_name
     }
     updated_chat_history = chat_history + [new_history_entry]
+    update_doc = {
+        "$set": {
+            "chat_history": updated_chat_history,
+            "user_id": user_id
+        }
+    }
+
     sessions_db.update_one(
         {"session_id": session_id},
-        {"$set": {"chat_history": updated_chat_history, "user_id": user_id}},
+        update_doc,
         upsert=True
     )
 

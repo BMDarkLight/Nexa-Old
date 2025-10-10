@@ -6,10 +6,11 @@ from bson import ObjectId
 from typing import List
 import datetime
 import logging
+import tiktoken
 
-from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry, replace_chat_history_from_point
-from api.database import sessions_db, agents_db, connectors_db, knowledge_db, minio_client
+from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry
 from api.agent import get_agent_graph
+from api.database import sessions_db, agents_db, connectors_db, knowledge_db, minio_client
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate, agent_doc_to_model
 from api.embed import delete_embeddings
 from api.auth import verify_token, oauth2_scheme
@@ -65,10 +66,8 @@ def _prepare_astream_input(graph, system_content, chat_history, query_text):
             resolved_system_content = "You are an AI agent in Nexa AI platform."
 
         messages = []
-        # Always start with a system message
         messages.append(SystemMessage(content=resolved_system_content))
 
-        # Normalize chat history: append HumanMessage or AIMessage as appropriate
         for entry in chat_history:
             if isinstance(entry, dict):
                 # user
@@ -155,12 +154,8 @@ async def ask(
         logger.exception("Token verification failed")
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
-    if not user.get("organization") and user.get("permission") != "sysadmin":
-        raise HTTPException(status_code=403, detail="You do not belong to an organization.")
-
     agent_id_to_use = None
     agent_doc = None
-
     if query.agent_id:
         if not ObjectId.is_valid(query.agent_id):
             raise HTTPException(status_code=400, detail="Invalid agent ID format.")
@@ -172,8 +167,6 @@ async def ask(
         if not agent_doc:
             raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
         agent_id_to_use = str(agent_oid)
-        connectors = agent_doc.get("connector_ids") or []
-        context = agent_doc.get("context") or []
 
     import uuid
     session_id = query.session_id or str(uuid.uuid4())
@@ -181,27 +174,14 @@ async def ask(
     if session and session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
     chat_history = session.get("chat_history", []) if session else []
-    org_id = user.get("organization")
 
     try:
         agent_graph = await get_agent_graph(
             question=query.query,
-            organization_id=org_id,
+            organization_id=user.get("organization"),
             chat_history=chat_history,
             agent_id=agent_id_to_use
         )
-        token_usage = agent_graph
-        logger.info(f"Token usage for this query: {token_usage}")
-        if session:
-            total_tokens = token_usage.get("total_tokens", 0)
-            sessions_db.update_one(
-                {"session_id": session_id},
-                {
-                    "$push": {"chat_history": {"user": query.query, "assistant": ""}},
-                    "$inc": {"token_usage.total_tokens": total_tokens}
-                },
-                upsert=True
-            )
     except Exception as e:
         logger.exception("Exception in get_agent_graph")
         async def error_response(exc_msg):
@@ -213,171 +193,73 @@ async def ask(
     agent_id_str = agent_graph.get("final_agent_id", agent_id_to_use or "")
 
     async def response_generator():
-        try:
-            full_answer = ""
-            input_messages = _prepare_astream_input(graph, system_content=None, chat_history=chat_history, query_text=query.query)
-            if graph:
-                try:
-                    async for chunk in graph.astream({"messages": input_messages}):
-                        # Logging for each chunk
-                        logging.info(f"Chunk received: {chunk}")
-                        contents = []
-                        # Support React-agent-wrapped responses: dict with "agent" key containing "messages"
-                        if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
-                            agent_messages = chunk["agent"]["messages"]
-                            for msg in agent_messages:
-                                # If AIMessage, get content
-                                if isinstance(msg, AIMessage):
-                                    msg_content = getattr(msg, "content", None)
-                                    if msg_content:
-                                        contents.append(msg_content)
-                        else:
-                            # Previous cases: direct "content" key or BaseMessage
-                            content = None
-                            if isinstance(chunk, dict):
-                                content = chunk.get("content", "")
-                            elif isinstance(chunk, BaseMessage):
-                                content = getattr(chunk, "content", None)
-                            else:
-                                content = str(chunk)
-                            if content is None:
-                                content = ""
-                            if content:
-                                contents.append(content)
-                        for content_piece in contents:
-                            if content_piece:
-                                yield content_piece
-                                full_answer += content_piece
-                except Exception as exc:
-                    logger.exception("Exception during streaming agent response")
-                    yield f"\n[Error while streaming response: {str(exc)}]\n"
-                    return
-            else:
-                full_answer = f"[Default Agent Response] You asked: {query.query}"
-                yield full_answer
+        full_answer = ""
+        input_messages = _prepare_astream_input(graph, None, chat_history, query.query)
+        encoding = tiktoken.encoding_for_model(agent_doc.get("model_name", "gpt-3.5-turbo")) if agent_doc else tiktoken.encoding_for_model("gpt-3.5-turbo")
+        system_messages = [m for m in input_messages if isinstance(m, SystemMessage)]
+        chat_messages = [m for m in input_messages if isinstance(m, (HumanMessage, AIMessage))]
+        system_prompt_tokens = sum(len(encoding.encode(m.content)) for m in system_messages)
+        prompt_tokens_excl_system = sum(len(encoding.encode(m.content)) for m in chat_messages)
+        total_completion_tokens = 0
+        total_tokens_used_including_system = 0
+        callback_handler = getattr(getattr(graph, "llm", None), "callback_handler", None)
+        if graph:
+            try:
+                async for chunk in graph.astream({"messages": input_messages}):
+                    contents = []
+                    if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
+                        for msg in chunk["agent"]["messages"]:
+                            if isinstance(msg, AIMessage):
+                                contents.append(getattr(msg, "content", ""))
+                    else:
+                        content = getattr(chunk, "content", "") if isinstance(chunk, BaseMessage) else str(chunk)
+                        if content:
+                            contents.append(content)
 
-            background_tasks.add_task(
-                save_chat_history,
-                session_id=session_id,
-                user_id=str(user["_id"]),
-                chat_history=chat_history,
-                query=query.query,
-                answer=full_answer,
-                agent_id=agent_id_str,
-                agent_name=agent_name
-            )
-        except Exception as exc:
-            logger.exception("Exception in response_generator")
-            yield f"\n[Internal error: {str(exc)}]\n"
+                    for content_piece in contents:
+                        if content_piece:
+                            yield content_piece
+                            full_answer += content_piece
+                total_completion_tokens = len(encoding.encode(full_answer))
+                total_tokens_used_including_system = system_prompt_tokens + prompt_tokens_excl_system + total_completion_tokens
 
-    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
-
-@router.post("/ask/regenerate/{message_num}")
-async def regenerate(
-    message_num: int,
-    background_tasks: BackgroundTasks,
-    request: Request,
-    token: str = Depends(oauth2_scheme)
-):
-    logger = logging.getLogger("api.routes.agents.regenerate")
-    try:
-        data = await request.json()
-        session_id = data.get("session_id")
-        agent_id = data.get("agent_id")
-    except Exception as e:
-        logger.exception("Failed to parse request JSON")
-        raise HTTPException(status_code=400, detail="Invalid request format.")
-
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.exception("Token verification failed")
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
-
-    session = sessions_db.find_one({"session_id": session_id})
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    if session.get("user_id") != str(user["_id"]):
-        raise HTTPException(status_code=403, detail="Permission denied for this session.")
-
-    chat_history = session.get("chat_history", [])
-    if message_num < 0 or message_num >= len(chat_history):
-        raise HTTPException(status_code=400, detail="Invalid message number.")
-
-    truncated_history = chat_history[:message_num]
-    original_query = chat_history[message_num].get("user", "")
-    org_id = user.get("organization")
-
-    try:
-        agent_graph = await get_agent_graph(
-            question=original_query,
-            organization_id=org_id,
-            chat_history=truncated_history,
-            agent_id=agent_id
+                logger.info(
+                    f"Session : {session_id} | Agent : {agent_doc.get('_id', 'Generalist')} | " if agent_doc else f"Session : {session_id} | Agent : Generalist | " +
+                    f"System tokens: {system_prompt_tokens} | "
+                    f"Prompt tokens (excl system): {prompt_tokens_excl_system} | "
+                    f"Completion tokens: {total_completion_tokens} | "
+                    f"Total tokens: {total_tokens_used_including_system}"
+                )
+            except Exception as exc:
+                logger.exception("Exception during streaming agent response")
+                yield f"\n[Error while streaming response: {str(exc)}]\n"
+                return
+        else:
+            full_answer = f"[Default Agent Response] You asked: {query.query}"
+            yield full_answer
+        background_tasks.add_task(
+            save_chat_history,
+            session_id=session_id,
+            user_id=str(user["_id"]),
+            chat_history=chat_history,
+            query=query.query,
+            answer=full_answer,
+            agent_id=agent_id_str,
+            agent_name=agent_name
         )
-    except Exception as e:
-        logger.exception("Exception in get_agent_graph (regenerate)")
-        async def error_response(exc_msg):
-            yield f"Error while generating agent graph: {exc_msg}"
-        return StreamingResponse(error_response(str(e)), media_type="text/plain; charset=utf-8")
-
-    graph = agent_graph.get("graph")
-    agent_name = agent_graph.get("final_agent_name", "Unknown Agent")
-    agent_id_str = agent_graph.get("final_agent_id", agent_id or "")
-
-    async def response_generator():
-        try:
-            full_answer = ""
-            input_messages = _prepare_astream_input(graph, system_content=None, chat_history=truncated_history, query_text=original_query)
-            if graph:
-                try:
-                    async for chunk in graph.astream({"messages": input_messages}):
-                        contents = []
-                        if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
-                            agent_messages = chunk["agent"]["messages"]
-                            for msg in agent_messages:
-                                if isinstance(msg, AIMessage):
-                                    msg_content = getattr(msg, "content", None)
-                                    if msg_content:
-                                        contents.append(msg_content)
-                        else:
-                            content = None
-                            if isinstance(chunk, dict):
-                                content = chunk.get("content", "")
-                            elif isinstance(chunk, BaseMessage):
-                                content = getattr(chunk, "content", None)
-                            else:
-                                content = str(chunk)
-                            if content is None:
-                                content = ""
-                            if content:
-                                contents.append(content)
-                        for content_piece in contents:
-                            if content_piece:
-                                yield content_piece
-                                full_answer += content_piece
-                except Exception as exc:
-                    logger.exception("Exception during streaming agent response (regenerate)")
-                    yield f"\n[Error while streaming response: {str(exc)}]\n"
-                    return
-            else:
-                full_answer = f"[Default Agent Response] You asked: {original_query}"
-                yield full_answer
-            background_tasks.add_task(
-                replace_chat_history_from_point,
-                session_id=session_id,
-                user_id=str(user["_id"]),
-                truncated_history=truncated_history,
-                query=original_query,
-                new_answer=full_answer,
-                agent_id=agent_id_str,
-                agent_name=agent_name
+        if total_tokens_used_including_system > 0:
+            sessions_db.update_one(
+                {"session_id": session_id},
+                {
+                    "$inc": {
+                        "token_usage.system_tokens": system_prompt_tokens,
+                        "token_usage.prompt_tokens": prompt_tokens_excl_system,
+                        "token_usage.completion_tokens": total_completion_tokens,
+                        "token_usage.total_tokens": total_tokens_used_including_system,
+                    }
+                },
+                upsert=True
             )
-        except Exception as exc:
-            logger.exception("Exception in response_generator (regenerate)")
-            yield f"\n[Internal error: {str(exc)}]\n"
     return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
 @router.post("/ask/edit/{message_num}")
@@ -442,6 +324,24 @@ async def edit_message(
         try:
             full_answer = ""
             input_messages = _prepare_astream_input(graph, system_content=None, chat_history=truncated_history, query_text=query)
+            # tiktoken-based counting as in /ask
+            # Try to get model_name from agent_doc if available, fallback to gpt-3.5-turbo
+            import tiktoken
+            model_name = None
+            agent_doc = None
+            if agent_id:
+                from bson import ObjectId
+                agent_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
+                if agent_doc:
+                    model_name = agent_doc.get("model_name", None)
+            encoding = tiktoken.encoding_for_model(model_name or "gpt-3.5-turbo")
+            from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+            system_messages = [m for m in input_messages if isinstance(m, SystemMessage)]
+            chat_messages = [m for m in input_messages if isinstance(m, (HumanMessage, AIMessage))]
+            system_prompt_tokens = sum(len(encoding.encode(m.content)) for m in system_messages)
+            prompt_tokens_excl_system = sum(len(encoding.encode(m.content)) for m in chat_messages)
+            total_completion_tokens = 0
+            total_tokens_used_including_system = 0
             if graph:
                 try:
                     async for chunk in graph.astream({"messages": input_messages}):
@@ -469,6 +369,15 @@ async def edit_message(
                             if content_piece:
                                 yield content_piece
                                 full_answer += content_piece
+                    total_completion_tokens = len(encoding.encode(full_answer))
+                    total_tokens_used_including_system = system_prompt_tokens + prompt_tokens_excl_system + total_completion_tokens
+                    logger.info(
+                        f"Session : {session_id} | Agent : {agent_id_str or 'Unknown'} | "
+                        f"System tokens: {system_prompt_tokens} | "
+                        f"Prompt tokens (excl system): {prompt_tokens_excl_system} | "
+                        f"Completion tokens: {total_completion_tokens} | "
+                        f"Total tokens: {total_tokens_used_including_system}"
+                    )
                 except Exception as exc:
                     logger.exception("Exception during streaming agent response (edit)")
                     yield f"\n[Error while streaming response: {str(exc)}]\n"
@@ -483,6 +392,19 @@ async def edit_message(
                 new_query=query,
                 new_answer=full_answer
             )
+            if total_tokens_used_including_system > 0:
+                sessions_db.update_one(
+                    {"session_id": session_id},
+                    {
+                        "$inc": {
+                            "token_usage.system_tokens": system_prompt_tokens,
+                            "token_usage.prompt_tokens": prompt_tokens_excl_system,
+                            "token_usage.completion_tokens": total_completion_tokens,
+                            "token_usage.total_tokens": total_tokens_used_including_system,
+                        }
+                    },
+                    upsert=True
+                )
         except Exception as exc:
             logger.exception("Exception in response_generator (edit)")
             yield f"\n[Internal error: {str(exc)}]\n"

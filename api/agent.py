@@ -8,7 +8,26 @@ from bson import ObjectId
 
 
 from api.embed import similarity, embed_question
-from api.schemas.agents import convert_messages_to_dict, TokenCountingCallbackHandler
+from api.schemas.agents import convert_messages_to_dict
+
+# --- Robust TokenCountingCallbackHandler ---
+from langchain.callbacks.base import BaseCallbackHandler
+
+class TokenCountingCallbackHandler(BaseCallbackHandler):
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+
+    def on_llm_end(self, response, **kwargs):
+        # Safely extract token usage from LLM response
+        usage = getattr(response, "llm_output", {}).get("token_usage", {})
+        self.prompt_tokens += usage.get("prompt_tokens", 0)
+        self.completion_tokens += usage.get("completion_tokens", 0)
+        self.total_tokens += usage.get("total_tokens", 0)
 from api.database import agents_db, connectors_db, knowledge_db, minio_client
 
 
@@ -308,14 +327,12 @@ async def get_agent_graph(
 
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
-        token_handler = TokenCountingCallbackHandler()
-        callback_manager = CallbackManager([token_handler])
+        # Remove streaming token handler logic, instead count tokens after composing prompt and completion
         agent_llm = LoggingChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
             streaming=True,
             max_retries=3,
-            callback_manager=callback_manager
         )
         graph = create_react_agent(agent_llm, active_tools)
         setattr(graph, "_is_react_agent", True)
@@ -323,12 +340,16 @@ async def get_agent_graph(
 
         messages_dict = convert_messages_to_dict(messages_list)
 
+        def _count_words(text):
+            return len(text.split())
+        prompt_tokens = sum(_count_words(m.get("content", "")) for m in messages_dict if m.get("role") in ("system","user","assistant","human"))
+        completion_tokens = 0
+        total_tokens = prompt_tokens + completion_tokens
         token_usage = {
-            "prompt_tokens": getattr(token_handler, "prompt_tokens", 0),
-            "completion_tokens": getattr(token_handler, "completion_tokens", 0),
-            "total_tokens": getattr(token_handler, "total_tokens", 0)
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens
         }
-
         return {
             "graph": graph,
             "messages": messages_dict,
@@ -337,14 +358,12 @@ async def get_agent_graph(
             "token_usage": token_usage
         }
     else:
-        token_handler = TokenCountingCallbackHandler()
-        callback_manager = CallbackManager([token_handler])
+        # Remove streaming token handler logic, instead count tokens after composing prompt and completion
         agent_llm = LoggingChatOpenAI(
             model="gpt-4o-mini",
             streaming=True,
             temperature=0.7,
             max_retries=3,
-            callback_manager=callback_manager
         )
         graph = create_react_agent(agent_llm, tools=[])
         setattr(graph, "_is_react_agent", True)
@@ -380,7 +399,16 @@ async def get_agent_graph(
 
         messages_dict = convert_messages_to_dict(messages_list)
 
-        token_usage = getattr(token_handler, "total_tokens", 0)
+        def _count_words(text):
+            return len(text.split())
+        prompt_tokens = sum(_count_words(m.get("content", "")) for m in messages_dict if m.get("role") in ("system","user","assistant","human"))
+        completion_tokens = 0
+        total_tokens = prompt_tokens + completion_tokens
+        token_usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens
+        }
 
         return {
             "graph": graph,
