@@ -6,13 +6,6 @@ from langchain_openai import ChatOpenAI
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
-import re
-import io
-import string
-import importlib
-import logging
-import unidecode
-import pandas as pd
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict, TokenCountingCallbackHandler
@@ -26,17 +19,9 @@ class LoggingChatOpenAI(ChatOpenAI):
     def generate(self, messages, *args, **kwargs):
         return super().generate(messages, *args, **kwargs)
 
-def _normalize_text(text):
-    text = str(text).lower()
-    text = text.translate(str.maketrans('', '', string.punctuation))
-    text = text.strip()
-    return text
-
-def _split_to_norm_words(s):
-    s = _normalize_text(s)
-    return set(re.split(r"\s+", s))
-
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
+    # Only used in this file, but keep as required by context
+    import re, unidecode
     name_ascii = unidecode.unidecode(name)
     sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', name_ascii)
     sanitized = re.sub(r'_+', '_', sanitized)
@@ -55,17 +40,13 @@ def retrieve_relevant_context(
     Retrieve the most relevant context from a list of context_docs for the given question.
     Handles both tabular and text document chunks. Returns a string of relevant context.
     """
-    import traceback
     if not context_docs or not question:
-        logging.warning("No context docs or question provided to retrieve_relevant_context.")
         return "⚠️ No relevant context found for this question."
 
     question_text = question if isinstance(question, str) else " ".join(question)
     try:
         question_emb = embed_question(question_text)
-        logging.info("Successfully embedded the question.")
-    except Exception as e:
-        logging.error(f"Failed to embed question: {e}\n{traceback.format_exc()}")
+    except Exception:
         return "⚠️ No relevant context found for this question."
 
     tabular_rows_scored = []
@@ -75,20 +56,15 @@ def retrieve_relevant_context(
         try:
             doc_is_tabular = doc.get("is_tabular", False)
             file_key = doc.get("file_key", None)
-            logging.debug(f"[Doc #{idx}] file_key: {file_key} | is_tabular: {doc_is_tabular}")
             if doc_is_tabular:
                 if not file_key:
-                    logging.warning(f"Tabular doc #{idx} missing file_key.")
                     continue
-                logging.info(f"Processing tabular file (precomputed embeddings): {file_key}")
 
                 tabular_rows = [
                     row_doc for row_doc in context_docs
                     if row_doc.get("file_key") == file_key and row_doc.get("embedding")
                 ]
-                logging.info(f"Found {len(tabular_rows)} rows with embeddings for tabular file {file_key}.")
                 if not tabular_rows:
-                    logging.info(f"No rows with embeddings found for tabular file {file_key}.")
                     continue
 
                 row_similarities = []
@@ -103,43 +79,33 @@ def retrieve_relevant_context(
                 filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
                 context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row in top_rows_actual)
 
-                for sim, row in top_rows_actual:
-                    logging.info(f"Tabular retrieval: file={file_key} row='{row}'")
-
                 max_score = top_rows_actual[0][0] if top_rows_actual else 0
                 tabular_rows_scored.append((max_score, context_text))
-                logging.info(f"Selected {len(top_rows_actual)} top rows from tabular file {file_key}.")
                 continue
             
             if "chunks" in doc and isinstance(doc["chunks"], list):
-                num_chunks = len(doc["chunks"])
-                logging.debug(f"[Doc #{idx}] has {num_chunks} text chunks.")
-                for cidx, chunk in enumerate(doc["chunks"]):
+                for chunk in doc["chunks"]:
                     chunk_text = chunk.get("text", "")
                     if not chunk_text.strip():
-                        logging.debug(f"Empty chunk text at doc {idx} chunk {cidx}. Skipping.")
                         continue
                     try:
                         chunk_emb = chunk.get("embedding") or embed_question(chunk_text[:2000])
                         sim = similarity(question_emb, chunk_emb)
                         text_chunks_scored.append((sim, chunk_text))
-                        logging.debug(f"[Text Chunk] doc_idx={idx} chunk_idx={cidx} similarity={sim:.4f}")
-                    except Exception as e:
-                        logging.error(f"Text chunk embedding/similarity error at doc {idx} chunk {cidx}: {e}")
+                    except Exception:
+                        pass
             elif doc.get("text"):
                 chunk_text = doc["text"]
-                logging.debug(f"[Doc #{idx}] single text chunk present.")
                 try:
                     chunk_emb = doc.get("embedding") or embed_question(chunk_text[:2000])
                     sim = similarity(question_emb, chunk_emb)
                     text_chunks_scored.append((sim, chunk_text))
-                    logging.debug(f"[Text Chunk] doc_idx={idx} similarity={sim:.4f}")
-                except Exception as e:
-                    logging.error(f"Text doc embedding/similarity error at doc {idx}: {e}")
+                except Exception:
+                    pass
             else:
-                logging.debug(f"Doc {idx} has no text or chunks. Skipping.")
-        except Exception as e:
-            logging.error(f"Error processing document #{idx}: {e}\n{traceback.format_exc()}")
+                pass
+        except Exception:
+            pass
 
     selected_contexts = []
     num_text_chunks_selected = 0
@@ -151,22 +117,17 @@ def retrieve_relevant_context(
         for sim, text in top_text_chunks:
             selected_contexts.append(text)
         num_text_chunks_selected = len(top_text_chunks)
-        logging.info(f"Selected {num_text_chunks_selected} top text chunks.")
 
     if tabular_rows_scored:
         tabular_rows_scored.sort(reverse=True, key=lambda x: x[0])
         for score, tabular_text in tabular_rows_scored[:top_n]:
             selected_contexts.append(tabular_text)
         num_tabular_groups_selected = min(top_n, len(tabular_rows_scored))
-        logging.info(f"Selected {num_tabular_groups_selected} top tabular row groups.")
 
     if not selected_contexts:
-        logging.warning("No relevant context found for the question after processing.")
         return "⚠️ No relevant context found for this question."
 
     final_context = "\n\n".join(selected_contexts)
-    logging.info(f"Returning {len(selected_contexts)} context entries (text and/or tabular): "
-                 f"text_chunks={num_text_chunks_selected}, tabular_groups={num_tabular_groups_selected}")
     return final_context
 
 @traceable
@@ -227,6 +188,7 @@ async def get_agent_graph(
     }
 
     if selected_agent:
+        import importlib
         for tool_name in selected_agent.get("tools", []):
             factory = builtin_tool_factories.get(tool_name)
             if factory:
@@ -240,7 +202,6 @@ async def get_agent_graph(
                     connector_type = connector.get("connector_type")
                     tool_factory_path = connector_tool_factory_map.get(connector_type)
                     if not tool_factory_path:
-                        logging.warning(f"No tool factory defined for connector type: {connector_type}")
                         continue
                     module_path, func_name = tool_factory_path.rsplit(".", 1)
                     tool_factory = getattr(importlib.import_module(module_path), func_name)
@@ -252,22 +213,15 @@ async def get_agent_graph(
                         active_tools.append(tool_factory(settings=connector["settings"], name=tool_name))
                     else:
                         active_tools.append(tool_factory(settings=connector["settings"], name=tool_name, llm_label=llm_label))
-
-                    logging.info(f"Loaded connector tool: {tool_name}")
-                except Exception as e:
-                    logging.error(f"Failed to create tool for connector {connector.get('name')}: {e}")
-
-        logging.info(f"Active tools for agent '{selected_agent['name'] if selected_agent else 'Generalist'}': "
-                     f"{[(getattr(t, 'name', None), getattr(t, 'llm_label', None)) for t in active_tools]}")
+                except Exception:
+                    pass
 
         for tool in active_tools:
             if hasattr(tool, "run"):
                 original_run = tool.run
                 if callable(original_run):
                     async def logging_run(input_text, original_run=original_run, tool=tool):
-                        logging.info(f"Tool '{getattr(tool, 'name', 'unknown')}' called with input: {input_text}")
                         output = await original_run(input_text)
-                        logging.info(f"Tool '{getattr(tool, 'name', 'unknown')}' output: {output}")
                         return output
                     tool.run = logging_run
 
