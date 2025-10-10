@@ -1,3 +1,4 @@
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from dotenv import load_dotenv, find_dotenv
@@ -203,6 +204,17 @@ def reject_signup(username: str, token: str = Depends(oauth2_scheme)):
     
     return {"message": "User rejected successfully"}
 
+def convert_object_ids(data):
+    if isinstance(data, list):
+        return [convert_object_ids(item) for item in data]
+    elif isinstance(data, dict):
+        return {
+            key: str(value) if isinstance(value, ObjectId) else convert_object_ids(value)
+            for key, value in data.items()
+        }
+    else:
+        return data
+
 @router.get("/signup/prospective-users", response_model=List[dict])
 def list_prospective_users(token: str = Depends(oauth2_scheme)):
     if not token:
@@ -215,8 +227,8 @@ def list_prospective_users(token: str = Depends(oauth2_scheme)):
     if user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="Permission denied")
     
-    prospective_users = list(prospective_users_db.find({}, {"_id": 0, "password": 0}))
-    return prospective_users
+    prospective_users = list(prospective_users_db.find({}, {"password": 0}))
+    return convert_object_ids(prospective_users)
 
 @router.get("/signup/prospective-users/{username}", response_model=dict)
 def get_prospective_user(username: str, token: str = Depends(oauth2_scheme)):
@@ -230,9 +242,9 @@ def get_prospective_user(username: str, token: str = Depends(oauth2_scheme)):
     if user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="Permission denied")
     
-    prospective_user = prospective_users_db.find_one({"username": username}, {"_id": 0, "password": 0})
+    prospective_user = prospective_users_db.find_one({"username": username}, {"password": 0})
 
     if not prospective_user:
         raise HTTPException(status_code=404, detail="Prospective user not found")
     
-    return prospective_user
+    return convert_object_ids(prospective_user)

@@ -8,6 +8,17 @@ from api.schemas.users import UserCreateModel, UserUpdateModel
 from api.auth import verify_token, hash_password, oauth2_scheme
 from api.database import users_db, prospective_users_db, orgs_db
 
+def convert_object_ids(data):
+    if isinstance(data, list):
+        return [convert_object_ids(item) for item in data]
+    elif isinstance(data, dict):
+        return {
+            key: str(value) if isinstance(value, ObjectId) else convert_object_ids(value)
+            for key, value in data.items()
+        }
+    else:
+        return data
+
 
 router = APIRouter(tags=["User Management"])
 
@@ -29,11 +40,7 @@ def list_users(token: str = Depends(oauth2_scheme)):
 
     users = list(users_db.find(query, {"_id": 0, "password": 0}))
 
-    for user in users:
-        if "organization" in user and isinstance(user.get("organization"), ObjectId):
-            user["organization"] = str(user["organization"])
-
-    return users
+    return convert_object_ids(users)
 
 @router.post("/users")
 def create_user(user: UserCreateModel, token: str = Depends(oauth2_scheme)):
