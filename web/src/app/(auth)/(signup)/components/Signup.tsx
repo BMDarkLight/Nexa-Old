@@ -3,7 +3,6 @@ import React from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import LoginHeader from "../../(login)/components/LoginHeader";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
@@ -20,6 +19,7 @@ type SignUpFormInputs = {
   username: string;
   email: string;
   phone: string;
+  organization: string;
   password: string;
   cpassword: string;
 };
@@ -38,6 +38,10 @@ const validationSchema = Yup.object().shape({
   phone: Yup.string()
     .required("لطفاً شماره همراه را وارد کنید.")
     .matches(/^09\d{9}$/, "فرمت شماره همراه معتبر نیست."),
+  organization: Yup.string()
+    .required("لطفاً نام سازمان را وارد کنید.")
+    .min(2, "نام سازمان باید حداقل ۲ کاراکتر باشد.")
+    .matches(/^[a-zA-Zآ-ی0-9\s]+$/, "نام سازمان فقط می‌تواند شامل حروف و عدد باشد."),
   password: Yup.string()
     .required("لطفاً رمز عبور را وارد کنید.")
     .matches(
@@ -75,7 +79,7 @@ export default function SignUpInputs() {
         lastname,
         email: data.email,
         phone: data.phone,
-        organization: "string",
+        organization: data.organization,
         plan: "free",
       };
 
@@ -96,6 +100,8 @@ export default function SignUpInputs() {
           },
           duration: 2000,
         });
+        const Error = await response.text();
+        console.log(Error);
         return;
       }
 
@@ -109,7 +115,7 @@ export default function SignUpInputs() {
       });
 
       setTimeout(() => {
-        router.push("/");
+        router.push("/waitlist");
       }, 1500);
 
       reset();
@@ -129,31 +135,36 @@ export default function SignUpInputs() {
     <form onSubmit={handleSubmit(onSubmit)}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col items-center gap-2">
-                {/* Logo Image */}
-                <a
-                    href="#"
-                    className="flex flex-col items-center gap-2 font-medium"
-                >
-                    <div className="flex size-8 items-center justify-center rounded-md">
-                        <picture>
-                            <img src="/Squad/Login/Logo.png" alt=""/>
-                        </picture>
-                    </div>
-                </a>
-                <h1 className="text-xl font-bold">ثبت نام در نکسا</h1>
-                <div className="text-center text-sm">
-                    از قبل حساب دارید؟
-                    <Link href="/login" className="underline underline-offset-4 hover:text-primary transition-all duration-500 mr-1">
-                        وارد شوید  
-                    </Link>
-                </div>
+          <a href="#" className="flex flex-col items-center gap-2 font-medium">
+            <div className="flex size-8 items-center justify-center rounded-md">
+              <picture>
+                <img src="/Squad/Login/Logo.png" alt="" />
+              </picture>
             </div>
+          </a>
+          <h1 className="text-xl font-bold">ثبت نام در نکسا</h1>
+          <div className="text-center text-sm">
+            از قبل حساب دارید؟
+            <Link
+              href="/login"
+              className="underline underline-offset-4 hover:text-primary transition-all duration-500 mr-1"
+            >
+              وارد شوید
+            </Link>
+          </div>
+        </div>
+
         <div className="flex flex-col gap-6">
           <div className="grid gap-3">
             <Label htmlFor="username">
               نام و نام خانوادگی<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input id="username" type="text" {...register("username")} />
+            <Input
+              id="username"
+              type="text"
+              {...register("username")}
+              className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            />
             {errors.username && (
               <p className="text-red-500 text-xs">{errors.username.message}</p>
             )}
@@ -163,7 +174,13 @@ export default function SignUpInputs() {
             <Label htmlFor="email">
               ایمیل<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input id="email" type="email" placeholder="m@example.com" {...register("email")} />
+            <Input
+              id="email"
+              type="email"
+              placeholder="m@example.com"
+              {...register("email")}
+              className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            />
             {errors.email && (
               <p className="text-red-500 text-xs">{errors.email.message}</p>
             )}
@@ -173,9 +190,31 @@ export default function SignUpInputs() {
             <Label htmlFor="phone">
               شماره همراه<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input id="phone" type="number" placeholder="مثلا ۰۹۱۲۳۴۵۶۷۸۹" {...register("phone")} />
+            <Input
+              id="phone"
+              type="number"
+              placeholder="مثلا ۰۹۱۲۳۴۵۶۷۸۹"
+              {...register("phone")}
+            />
             {errors.phone && (
               <p className="text-red-500 text-xs">{errors.phone.message}</p>
+            )}
+          </div>
+
+          <div className="grid gap-3">
+            <Label htmlFor="organization">
+              اسم سازمان<span className="text-[#EF4444]">*</span>
+            </Label>
+            <Input
+              id="organization"
+              type="text"
+              placeholder="مثلاً شرکت نکسا"
+              {...register("organization")}
+            />
+            {errors.organization && (
+              <p className="text-red-500 text-xs">
+                {errors.organization.message}
+              </p>
             )}
           </div>
 
@@ -183,7 +222,12 @@ export default function SignUpInputs() {
             <Label htmlFor="password">
               رمز عبور<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input id="password" type="password" {...register("password")} />
+            <Input
+              id="password"
+              type="password"
+              {...register("password")}
+              className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            />
             {errors.password && (
               <p className="text-red-500 text-xs">{errors.password.message}</p>
             )}
@@ -200,6 +244,7 @@ export default function SignUpInputs() {
                 id="cpassword"
                 type="password"
                 {...register("cpassword")}
+                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
               />
               {errors.cpassword && (
                 <p className="text-red-500 text-xs">

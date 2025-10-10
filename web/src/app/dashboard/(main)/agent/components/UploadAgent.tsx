@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Cookie from "js-cookie";
 import { toast } from "sonner";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Upload } from "lucide-react";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
@@ -16,10 +16,11 @@ const End_point = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 interface ContextEntry {
-  id: string;
-  filename?: string;
-  size?: number;
-  type?: string;
+  context_id: string;
+  filename: string;
+  file_key: string;
+  is_tabular: boolean;
+  created_at: string;
 }
 
 export default function UploadAgent() {
@@ -34,12 +35,13 @@ export default function UploadAgent() {
   const token = Cookie.get("auth_token");
   const tokenType = Cookie.get("token_type") ?? "Bearer";
 
-  const fetchContext = async () => {
-    if (!agent_id || !token) return;
+  // fetchContext now برمی‌گرداند data تا در caller هم ازش استفاده بشه
+  const fetchContext = useCallback(async (): Promise<ContextEntry[] | null> => {
+    if (!agent_id || !token) return null;
 
     try {
       const res = await fetch(
-        `${API_Base_Url}:${API_PORT}${End_point}/${agent_id}`,
+        `${API_Base_Url}:${API_PORT}${End_point}/${agent_id}/context`,
         {
           method: "GET",
           headers: {
@@ -48,39 +50,55 @@ export default function UploadAgent() {
         }
       );
 
-      if (!res.ok) throw new Error("خطا در دریافت اطلاعات ایجنت");
+      if (!res.ok) throw new Error("خطا در دریافت لیست فایل‌ها");
 
-      const data = await res.json();
-      const contextData: ContextEntry[] =
-        data.context?.map((id: string) => ({
-          id,
-          filename: id,
-          type: "pdf",
-        })) || [];
-      setContextEntries(contextData);
+      const data: ContextEntry[] = await res.json();
+      setContextEntries(data);
+      return data;
     } catch (err) {
       console.error(err);
       toast.error("خطا در دریافت لیست فایل‌ها", {
         icon: null,
         style: { background: "#DC2626", color: "#fff" },
       });
+      return null;
     }
-  };
+  }, [agent_id, token, tokenType]);
 
   useEffect(() => {
     fetchContext();
-  }, [agent_id]);
+    const handleRefresh = () => fetchContext();
+    window.addEventListener("refreshFiles", handleRefresh);
 
-  const getFileType = (file: File): string => {
-    const type = file.type;
-    const name = file.name.toLowerCase();
+    return () => {
+      window.removeEventListener("refreshFiles", handleRefresh);
+    };
+  }, [fetchContext]);
 
-    if (type.includes("word") || name.endsWith(".doc") || name.endsWith(".docx"))
-      return "word";
-    if (type.includes("sheet") || name.endsWith(".xls") || name.endsWith(".xlsx"))
-      return "excel";
-    if (type.includes("pdf") || name.endsWith(".pdf")) return "pdf";
+  const getFileType = (filename: string): string => {
+    const lower = filename.toLowerCase();
+    if (lower.endsWith(".doc") || lower.endsWith(".docx")) return "word";
+    if (lower.endsWith(".xls") || lower.endsWith(".xlsx")) return "excel";
+    if (lower.endsWith(".pdf")) return "pdf";
     return "unknown";
+  };
+
+  // helper: poll until new files appear (or timeout)
+  const waitForContextUpdate = async (
+    prevCount: number,
+    expectedIncrease: number,
+    maxAttempts = 8,
+    intervalMs = 800
+  ): Promise<void> => {
+    for (let i = 0; i < maxAttempts; i++) {
+      const data = await fetchContext();
+      const current = data ? data.length : contextEntries.length;
+      if (current >= prevCount + expectedIncrease) return;
+      // اندکی صبر کن و تکرار کن
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    // در نهایت یک بار دیگر تلاش نهایی برای اطمینان
+    await fetchContext();
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,18 +106,18 @@ export default function UploadAgent() {
 
     const selectedFiles = Array.from(e.target.files);
     setFiles(selectedFiles);
-
     setLoading(true);
+
+    const prevCount = contextEntries.length;
     try {
       for (const file of selectedFiles) {
-        const fileType = getFileType(file);
+        const fileType = getFileType(file.name);
 
-        // ✅ toast بر اساس نوع فایل
         const toastMsg =
           fileType === "word"
             ? "فایل Word در حال آپلود شدن است"
             : fileType === "excel"
-            ? "فایل Exel در حال آپلود شدن است"
+            ? "فایل Excel در حال آپلود شدن است"
             : fileType === "pdf"
             ? "فایل PDF در حال آپلود شدن است"
             : "📁 فایل با نوع ناشناخته در حال آپلود است...";
@@ -137,7 +155,8 @@ export default function UploadAgent() {
         style: { background: "#059669", color: "#fff" },
       });
 
-      fetchContext();
+      // poll کن تا لیست فایل‌ها آپدیت بشه (ممکنه بک‌اند زمان نیاز داشته باشه)
+      await waitForContextUpdate(prevCount, selectedFiles.length);
     } catch (err) {
       toast.error("آپلود فایل با خطا مواجه شد", {
         icon: null,
@@ -149,16 +168,22 @@ export default function UploadAgent() {
     }
   };
 
-  const getFileIcon = (filename?: string): string => {
-    if (!filename) return "/Squad/image/mc-file-pdf.png";
-
+  const getFileIcon = (filename: string): string => {
     const lower = filename.toLowerCase();
     if (lower.endsWith(".doc") || lower.endsWith(".docx"))
-      return "/Squad/image/mc-file-word.png";
+      return "/Squad/image/mc-file-document.png";
     if (lower.endsWith(".xls") || lower.endsWith(".xlsx"))
-      return "/Squad/image/mc-file-excel.png";
+      return "/Squad/image/mc-file-spreadsheet.png";
     if (lower.endsWith(".pdf")) return "/Squad/image/mc-file-pdf.png";
     return "/Squad/image/mc-file-pdf.png";
+  };
+
+  const cleanFileName = (filename: string): string => {
+    const parts = filename.split("_");
+    if (parts.length > 1) {
+      return parts.slice(1).join("_");
+    }
+    return filename.replace(/^files\//, "");
   };
 
   const handleNext = () => {
@@ -209,24 +234,24 @@ export default function UploadAgent() {
             {contextEntries.length > 0 ? (
               <Table>
                 <TableBody>
-                  {contextEntries.map((file, index) => (
-                    <TableRow key={index} className="relative">
-                      <TableCell className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <img
-                            src={getFileIcon(file.filename)}
-                            alt=""
-                            className="w-6 h-6"
+                  {contextEntries.map((file, index) => {
+                    const displayName = cleanFileName(file.filename);
+                    const icon = getFileIcon(file.filename);
+                    return (
+                      <TableRow key={index} className="relative">
+                        <TableCell className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <img src={icon} alt="" className="w-6 h-6" />
+                            {displayName}
+                          </div>
+                          <DeleteFile
+                            agent_id={agent_id as string}
+                            context_id={file.context_id}
                           />
-                          فایل {index + 1}
-                        </div>
-                        <DeleteFile
-                          agent_id={agent_id as string}
-                          context_id={file.filename}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             ) : (

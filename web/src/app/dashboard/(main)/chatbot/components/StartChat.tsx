@@ -171,7 +171,7 @@ export default function StartChat() {
   };
 
   return (
-    <div className="h-[90vh] flex items-center justify-center w-[85%] mx-auto">
+    <div className="h-[90vh] flex items-center justify-center w-[100%] md:w-[85%] mx-auto">
       <div className="chat-wrapper w-full">
         <div className="chat-header mb-4">
           <h2 className="font-bold text-xl">
@@ -180,9 +180,9 @@ export default function StartChat() {
         </div>
 
         <div className="chat-input relative">
-          <div className="absolute right-3 top-2">
+          <div className="absolute right-3 top-3">
             <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-              <SelectTrigger className="w-[150px] text-xs rounded-xl">
+              <SelectTrigger className="text-xs rounded-full px-4 py-2" size="sm">
                 <SelectValue placeholder="انتخاب ایجنت" />
               </SelectTrigger>
               <SelectContent>
@@ -200,16 +200,16 @@ export default function StartChat() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="داده‌ها را متصل کنید و گفت‌وگو را شروع کنید!"
             onKeyPress={handleKeyPress}
-            className="pt-18 pb-5 text-xs md:text-base"
+            className="pt-16 pb-7 text-xs md:text-base rounded-xl "
           />
 
           <button
             type="button"
             onClick={handleSend}
             disabled={!query || isSending}
-            className={`absolute inset-y-16 left-2 flex items-center justify-center w-6 h-6 rounded-full transition duration-300 ${
+            className={`absolute inset-y-13 md:inset-y-13 left-2 md:left-3 flex items-center justify-center w-7 h-7 md:w-8 md:h-8 rounded-full transition duration-300 ${
               !query || isSending
-                ? "bg-gray-400 cursor-not-allowed"
+                ? "bg-gray-400 text-white cursor-not-allowed"
                 : "bg-blue-600 text-white hover:opacity-90"
             }`}
           >

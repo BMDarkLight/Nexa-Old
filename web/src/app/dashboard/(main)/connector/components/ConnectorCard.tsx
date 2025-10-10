@@ -117,12 +117,12 @@ export default function ConnectorCard() {
     <div className="flex flex-col gap-5 lg:px-5">
       <div className="flex justify-between mt-4 md:mt-0 items-center">
         <h2 className="text-xl font-medium">لیست اتصالات</h2>
-        <Link href="connector/new-connector">
+        {/* <Link href="connector/new-connector">
           <Button className="cursor-pointer text-xs md:text-sm">
             اتصال جدید
             <Plus />
           </Button>
-        </Link>
+        </Link> */}
       </div>
 
       <div className="flex justify-between flex-wrap gap-5 lg:grid lg:grid-cols-3 lg:gap-2">

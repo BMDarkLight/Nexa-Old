@@ -112,7 +112,7 @@ export default function ResetPasswordCom() {
             <Label htmlFor="password1">
               رمز عبور جدید<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input id="password1" type="text" {...register("password")} />
+            <Input id="password1" type="text" {...register("password")} className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]" />
             {errors.password && (
               <p className="text-xs text-red-400">{errors.password.message}</p>
             )}
@@ -127,6 +127,7 @@ export default function ResetPasswordCom() {
                 id="repeat-password"
                 type={showConfirmPassword ? "text" : "password"}
                 {...register("cpassword")}
+                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
               />
             </div>
             {errors.cpassword && (

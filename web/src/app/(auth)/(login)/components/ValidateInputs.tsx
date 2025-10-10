@@ -147,7 +147,7 @@ export default function ValidateInputs() {
             <Label htmlFor="username">
               نام کاربری<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input id="username" type="text" {...register("username")} />
+            <Input id="username" type="text" {...register("username")} className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]" />
             {errors.username && (
               <p className="text-red-500 text-xs">{errors.username.message}</p>
             )}
@@ -169,6 +169,7 @@ export default function ValidateInputs() {
                 id="password"
                 type="password"
                 {...register("password")}
+                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
               />
             </div>
             {errors.password && (

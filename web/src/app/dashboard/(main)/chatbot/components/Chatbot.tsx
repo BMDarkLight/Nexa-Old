@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/select";
 import Cookie from "js-cookie";
 import { useParams, useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Agent {
   _id: string;
@@ -34,8 +36,7 @@ interface ChatMessage {
   agent_name?: string | null;
 }
 
-const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
 const End_point_ask = "/ask";
 const End_point_agents = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
@@ -274,72 +275,69 @@ export default function Chatbot() {
   };
 
   // handle edit btn
-  const handleSaveEdit = async (index: number) => {
-    if (index === null || !authHeader) return;
-    const msg = chatHistory[index];
-    if (!msg?.message_num) return;
+const handleSaveEdit = async (index: number) => {
+  if (index === null || !authHeader) return;
+  const msg = chatHistory[index];
+  if (!msg?.message_num) return;
 
-    setIsEditingSending(true);
+  setIsEditingSending(true);
 
-    try {
-      const params = new URLSearchParams();
-      params.append("query", editValue);
-      params.append("session_id", sessionId);
-      if (selectedAgent) params.append("agent_id", selectedAgent);
+  try {
+    const body = {
+      query: editValue,
+      session_id: sessionId,
+      agent_id: selectedAgent,
+    };
 
-      const response = await fetch(
-        `${API_Base_Url}:${API_PORT}/ask/edit/${msg.message_num}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Authorization: authHeader,
-          },
-          body: params.toString(),
-        }
-      );
-
-      if (response.status === 401) {
-        alert("مدت زمان موندن شما منقضی شده است. لطفاً دوباره وارد شوید");
-        router.push("/login");
-        return;
+    const response = await fetch(
+      `${API_Base_Url}:${API_PORT}/ask/edit/${msg.message_num}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify(body),
       }
+    );
 
-      if (!response.ok) {
-        alert("خطا در ویرایش پیام");
-        return;
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let botMessage = "";
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          botMessage += decoder.decode(value, { stream: true });
-
-          setChatHistory((prev) => {
-            const updated = [...prev];
-            updated[index].user = editValue;
-            updated[index].bot = botMessage;
-            updated[index].agent_name =
-              agents.find((a) => a._id === selectedAgent)?.name || null;
-            return updated;
-          });
-          scrollToBottom();
-        }
-      }
-
-      setEditingIndex(null);
-      setEditValue("");
-    } catch {
-      alert("خطا در ویرایش پیام");
-    } finally {
-      setIsEditingSending(false);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log("❌ خطای ویرایش:", errorText);
+      return;
     }
-  };
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let botMessage = "";
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        botMessage += decoder.decode(value, { stream: true });
+
+        setChatHistory((prev) => {
+          const updated = [...prev];
+          updated[index].user = editValue;
+          updated[index].bot = botMessage;
+          updated[index].agent_name =
+            agents.find((a) => a._id === selectedAgent)?.name || null;
+          return updated;
+        });
+        scrollToBottom();
+      }
+    }
+
+    setEditingIndex(null);
+    setEditValue("");
+  } catch {
+    alert("خطا در ویرایش پیام");
+  } finally {
+    setIsEditingSending(false);
+  }
+};
+
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey && query && !isSending) {
@@ -381,14 +379,14 @@ export default function Chatbot() {
   };
 
   return (
-    <div className="h-[95vh] flex flex-col justify-end w-[85%] mx-auto">
-      <div className="flex-1 overflow-y-auto mb-4 p-4 w-full">
+    <div className="h-[94vh] flex flex-col justify-end md:w-[85%] w-[100%] mx-auto">
+      <div className="flex-1 overflow-y-auto mb-4 py-6 px-1 w-full ">
         {chatHistory.map((chat, idx) => (
           <div key={idx} className="mb-2 flex flex-col gap-1">
             <div className="flex items-center gap-2 group">
               <div className="group w-full">
                 <div className="flex gap-2 items-start">
-                  <span className="inline-flex w-7 h-7 rounded-full bg-black flex items-center justify-center">
+                  <span className="inline-flex w-8 h-8 rounded-full bg-primary flex items-center justify-center">
                     <User size={18} className="text-white" />
                   </span>
                   {editingIndex === idx ? (
@@ -450,7 +448,11 @@ export default function Chatbot() {
                   </div>
                   <div className="flex-1">
                     <p className="font-bold">{chat.agent_name || "نکسا"}</p>
-                    <div className="mt-2">{chat.bot}</div>
+                    <div className="mt-2 prose prose-sm max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {chat.bot}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 </div>
                 <div className="opacity-0 group-hover:opacity-100 transition-opacity">
@@ -468,12 +470,12 @@ export default function Chatbot() {
       </div>
 
       <div className="flex items-end gap-2 relative">
-        <div className="absolute right-3 top-2">
+        <div className="absolute right-3 top-3">
           <Select
             value={selectedAgent}
             onValueChange={(val) => setSelectedAgent(val)}
           >
-            <SelectTrigger className="w-[150px] text-xs rounded-xl">
+            <SelectTrigger className="text-xs rounded-full px-4 py-2" size="sm">
               <SelectValue placeholder="انتخاب ایجنت" />
             </SelectTrigger>
             <SelectContent>
@@ -489,20 +491,19 @@ export default function Chatbot() {
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="داده‌ها را متصل کنید و گفت‌وگو را شروع کنید!"
+          placeholder="گفتگو کنید"
           onKeyPress={handleKeyPress}
-          className="pt-18 pb-5 text-xs md:text-base"
+          className="pt-16 pb-7 text-xs md:text-base rounded-xl "
         />
         <button
           type="button"
           onClick={handleSend}
           disabled={!query || isSending}
-          className={`flex items-center justify-center transition duration-300
-            ${
-              !query || isSending
-                ? "bg-gray-400 cursor-not-allowed"
-                : "bg-blue-600 text-white hover:opacity-90"
-            } absolute inset-y-15 left-2 w-6 h-6 rounded-full`}
+          className={`absolute inset-y-13 md:inset-y-13 left-2 md:left-3 flex items-center justify-center w-7 h-7 md:w-8 md:h-8 rounded-full transition duration-300 ${
+            !query || isSending
+              ? "bg-gray-400 text-white cursor-not-allowed"
+              : "bg-blue-600 text-white hover:opacity-90"
+          }`}
         >
           <ArrowUp size={18} />
         </button>

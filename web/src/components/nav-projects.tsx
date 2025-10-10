@@ -87,7 +87,7 @@ export function NavProjects({
           item.type == "link" ? (
           <SidebarMenuItem key={item.name}>
           
-            <SidebarMenuButton asChild className={cn(pathname.startsWith(item.url) ? `bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground` : ``)}>
+            <SidebarMenuButton asChild className={cn(pathname.startsWith(item.url) ? `bg-primary/50 text-[#001120] hover:bg-primary/70 hover:text-[#001120]` : ``)}>
               <Link href={item.url}>
                 <item.icon className={item.color}/>
                 <span >{item.name}</span>

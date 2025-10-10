@@ -25,6 +25,7 @@ export default function DeleteFile({ agent_id, context_id }: DeleteFileProps) {
 
   const handleDownload = async () => {
     if (!agent_id || !context_id) return;
+    setShow(false);
 
     try {
       const res = await fetch(
@@ -37,21 +38,32 @@ export default function DeleteFile({ agent_id, context_id }: DeleteFileProps) {
         }
       );
 
-      if (!res.ok) throw new Error("دانلود فایل با خطا مواجه شد");
+      if (!res.ok) throw new Error("دریافت لینک دانلود با خطا مواجه شد");
 
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = context_id;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
+      const data = await res.json();
+
+      if (data.download_url) {
+        const downloadUrl = data.download_url;
+
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.target = "_blank";
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        toast.success("دانلود فایل آغاز شد", {
+          icon: null,
+          style: { background: "#059669", color: "#fff" },
+        });
+      } else {
+        throw new Error("لینک دانلود موجود نیست");
+      }
     } catch (error) {
       console.error(error);
-      toast.error("فایل دانلود نشد.", {
-        icon:null ,
+      toast.error("دانلود فایل انجام نشد.", {
+        icon: null,
         style: { background: "#DC2626", color: "#fff" },
       });
     }
@@ -60,6 +72,7 @@ export default function DeleteFile({ agent_id, context_id }: DeleteFileProps) {
   const handleDelete = async () => {
     if (!agent_id || !context_id) return;
 
+    setShow(false);
     const result = await Swal.fire({
       title: "حذف فایل",
       text: "آیا مطمئن هستید که می‌خواهید این فایل را حذف کنید؟",
@@ -91,21 +104,17 @@ export default function DeleteFile({ agent_id, context_id }: DeleteFileProps) {
 
         if (!res.ok) throw new Error("خطا در حذف فایل");
 
-        Swal.fire({
-          title: "موفق!",
-          text: "فایل با موفقیت حذف شد.",
-          icon: "success",
-          confirmButtonText: "باشه",
-        }).then(() => {
-          router.refresh();
+        toast.success("فایل با موفقیت حذف شد", {
+          icon: null,
+          style: { background: "#059669", color: "#fff" },
         });
+
+        window.dispatchEvent(new Event("refreshFiles"));
       } catch (error) {
         console.error(error);
-        Swal.fire({
-          title: "خطا!",
-          text: "حذف فایل با مشکل مواجه شد.",
-          icon: "error",
-          confirmButtonText: "باشه",
+        toast.error("حذف فایل با مشکل مواجه شد.", {
+          icon: null,
+          style: { background: "#DC2626", color: "#fff" },
         });
       }
     }
@@ -113,28 +122,32 @@ export default function DeleteFile({ agent_id, context_id }: DeleteFileProps) {
 
   return (
     <>
-      <div>
-        <EllipsisVertical size={20} onClick={() => setShow(!show)} />
-        <div
-          className={`fixed z-[9999] w-26 left-5 md:w-40 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-md animate-in fade-in flex flex-col gap-4 p-2 ${
-            show ? `block` : `hidden`
-          }`}
-        >
+      <div className="relative">
+        <EllipsisVertical
+          size={20}
+          onClick={() => setShow(!show)}
+          className="cursor-pointer"
+        />
+        {show && (
           <div
-            className="flex justify-between hover:text-[#2A9D90] transition duration-400 cursor-pointer"
-            onClick={handleDownload}
+            className={`fixed z-[9999] w-26 left-5 md:w-40 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-md animate-in fade-in flex flex-col gap-4 p-2`}
           >
-            <p className="text-sm">دانلود</p>
-            <Download size={16} />
+            <div
+              className="flex justify-between hover:text-[#2A9D90] transition duration-400 cursor-pointer"
+              onClick={handleDownload}
+            >
+              <p className="text-sm">دانلود</p>
+              <Download size={16} />
+            </div>
+            <div
+              className="flex justify-between hover:text-[#DC2626] transition duration-400 cursor-pointer"
+              onClick={handleDelete}
+            >
+              <p className="text-sm">حذف</p>
+              <Trash2 size={16} />
+            </div>
           </div>
-          <div
-            className="flex justify-between hover:text-[#DC2626] transition duration-400 cursor-pointer"
-            onClick={handleDelete}
-          >
-            <p className="text-sm">حذف</p>
-            <Trash2 size={16} />
-          </div>
-        </div>
+        )}
       </div>
     </>
   );

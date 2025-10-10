@@ -75,7 +75,7 @@ export function NavMain({
                           className={cn(
                             "text-[#71717A]",
                             isActive &&
-                              "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground rounded-md"
+                              "bg-primary/50 text-[#001120] hover:bg-primary/70 hover:text-[#001120] rounded-md"
                           )}
                         >
                           <div className="flex justify-between items-center text-base">
@@ -85,13 +85,6 @@ export function NavMain({
                               </a>
                             </div>
                             <div className="flex items-center gap-2">
-                              <a
-                                href="#"
-                                className="hover:text-green-400"
-                                onClick={(e) => e.preventDefault()}
-                              >
-                                <Edit size={18} />
-                              </a>
                               <a
                                 href="#"
                                 className="hover:text-red-400"

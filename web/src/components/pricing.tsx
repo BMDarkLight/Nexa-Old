@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CircleCheck, CircleHelp } from "lucide-react";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 const tooltipContent = {
   styles: "Choose from a variety of styles to suit your preferences.",
@@ -24,10 +25,9 @@ const plans = [
   {
     name: "شروع‌کننده",
     price: 1800000,
-    priceName: " تومان" ,
-    monthly: "/ماهانه" ,
-    description:
-      "مناسب برای کسب‌وکارهای کوچک و شروع‌کننده",
+    priceName: " تومان",
+    monthly: "/ماهانه",
+    description: "مناسب برای کسب‌وکارهای کوچک و شروع‌کننده",
     features: [
       { title: "تا 250 پیام" },
       { title: "7 روز ذخیره سازی فایل ها" },
@@ -38,11 +38,10 @@ const plans = [
   {
     name: "حرفه‌ای",
     price: 4200000,
-     priceName: " تومان" ,
-    monthly: "/ماهانه" ,
+    priceName: " تومان",
+    monthly: "/ماهانه",
     isRecommended: true,
-    description:
-      "مناسب برای کسب‌وکارهای در حال رشد و متوسط",
+    description: "مناسب برای کسب‌وکارهای در حال رشد و متوسط",
     features: [
       { title: "تا 1000 پیام" },
       { title: "10 روز ذخیره سازی فایل ها" },
@@ -52,8 +51,7 @@ const plans = [
   {
     name: "ویژه",
     price: " سفارشی",
-    description:
-      "راه‌حل سفارشی برای سازمان‌های بزرگ",
+    description: "راه‌حل سفارشی برای سازمان‌های بزرگ",
     features: [
       { title: "بدون محدودیت پیام" },
       { title: "بدون محدودیت نگه داری در فایل ها" },
@@ -63,21 +61,29 @@ const plans = [
 ];
 
 const Pricing = () => {
-  const [selectedBillingPeriod, setSelectedBillingPeriod] = useState("monthly");
+  const [selectedBillingPeriod, setSelectedBillingPeriod] =
+    useState("monthly");
+  const router = useRouter();
 
-  const formatPrice = (price : number | string): string=>{
-    if(typeof price !== "number") return price  ;
+  const formatPrice = (price: number | string): string => {
+    if (typeof price !== "number") return price;
     return price.toLocaleString("fa-IR");
-  }
+  };
 
-  const getDisplayPrice = (price: number | string): string=>{
-    if(typeof price !== "number") return price ;
-    if(selectedBillingPeriod === "yearly") {
-      const discount = price * ((100 - YEARLY_DISCOUNT) / 100)
-      return formatPrice(discount)
+  const getDisplayPrice = (price: number | string): string => {
+    if (typeof price !== "number") return price;
+    if (selectedBillingPeriod === "yearly") {
+      const discount = price * ((100 - YEARLY_DISCOUNT) / 100);
+      return formatPrice(discount);
     }
     return formatPrice(price);
-  }
+  };
+
+  const handleButtonClick = (plan: { buttonText: string }) => {
+    if (plan.buttonText === "ثبت نام") {
+      router.push("/signup");
+    }
+  };
 
   return (
     <div
@@ -116,9 +122,8 @@ const Pricing = () => {
             )}
             <h3 className="text-base font-bold">{plan.name}</h3>
             <p className="mt-2 text-lg font-bold text-primary">
-
               {getDisplayPrice(plan.price)}
-                {plan.priceName}
+              {plan.priceName}
               <span className="ml-1.5 text-sm text-muted-foreground font-normal">
                 {plan.monthly}
               </span>
@@ -131,23 +136,19 @@ const Pricing = () => {
               variant={plan.isPopular ? "default" : "outline"}
               size="lg"
               className="w-full mt-6 text-base rounded-full cursor-pointer"
+              onClick={() => handleButtonClick(plan)}
             >
               {plan.buttonText}
             </Button>
-            {/* <Separator className="my-8" /> */}
+
             <ul className="space-y-2 mt-7">
               {plan.features.map((feature) => (
-                <li key={feature.title} className="flex items-center justify-start gap-1.5 text-sm text-muted-foreground">
+                <li
+                  key={feature.title}
+                  className="flex items-center justify-start gap-1.5 text-sm text-muted-foreground"
+                >
                   <CircleCheck className="h-4 w-4 text-green-600" />
                   {feature.title}
-                  {/* {feature.tooltip && (
-                    <Tooltip>
-                      <TooltipTrigger className="cursor-help">
-                        <CircleHelp className="h-4 w-4 mt-1 text-gray-500" />
-                      </TooltipTrigger>
-                      <TooltipContent>{feature.tooltip}</TooltipContent>
-                    </Tooltip>
-                  )} */}
                 </li>
               ))}
             </ul>
