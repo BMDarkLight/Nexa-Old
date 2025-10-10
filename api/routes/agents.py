@@ -284,10 +284,18 @@ async def regenerate(
         data = await request.json()
         session_id = data.get("session_id")
         agent_id = data.get("agent_id")
-        user = verify_token(token)
     except Exception as e:
-        logger.exception("Failed to parse request or verify token")
-        raise HTTPException(status_code=400, detail="Invalid request or authentication.")
+        logger.exception("Failed to parse request JSON")
+        raise HTTPException(status_code=400, detail="Invalid request format.")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.exception("Token verification failed")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
@@ -299,13 +307,8 @@ async def regenerate(
         raise HTTPException(status_code=400, detail="Invalid message number.")
 
     truncated_history = chat_history[:message_num]
-    original_query = chat_history[message_num]['user']
+    original_query = chat_history[message_num].get("user", "")
     org_id = user.get("organization")
-
-    agent_doc = None
-    if agent_id:
-        if ObjectId.is_valid(agent_id):
-            agent_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
 
     try:
         agent_graph = await get_agent_graph(
@@ -315,10 +318,10 @@ async def regenerate(
             agent_id=agent_id
         )
     except Exception as e:
-        logger.exception("Exception in /ask/regenerate endpoint")
+        logger.exception("Exception in get_agent_graph (regenerate)")
         async def error_response(exc_msg):
-            yield f"Sorry, there was an error processing your request. Please try again later. Details: {exc_msg}"
-        return StreamingResponse(error_response(str(e)), media_type="text/plain")
+            yield f"Error while generating agent graph: {exc_msg}"
+        return StreamingResponse(error_response(str(e)), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph.get("graph")
     agent_name = agent_graph.get("final_agent_name", "Unknown Agent")
@@ -331,10 +334,7 @@ async def regenerate(
             if graph:
                 try:
                     async for chunk in graph.astream({"messages": input_messages}):
-                        # Logging for each chunk
-                        logging.info(f"Chunk received: {chunk}")
                         contents = []
-                        # Support React-agent-wrapped responses: dict with "agent" key containing "messages"
                         if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
                             agent_messages = chunk["agent"]["messages"]
                             for msg in agent_messages:
@@ -360,7 +360,7 @@ async def regenerate(
                                 full_answer += content_piece
                 except Exception as exc:
                     logger.exception("Exception during streaming agent response (regenerate)")
-                    yield f"\n[Error: An error occurred while generating the response. Details: {str(exc)}]\n"
+                    yield f"\n[Error while streaming response: {str(exc)}]\n"
                     return
             else:
                 full_answer = f"[Default Agent Response] You asked: {original_query}"
@@ -378,7 +378,7 @@ async def regenerate(
         except Exception as exc:
             logger.exception("Exception in response_generator (regenerate)")
             yield f"\n[Internal error: {str(exc)}]\n"
-    return StreamingResponse(response_generator(), media_type="text/plain")
+    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
 @router.post("/ask/edit/{message_num}")
 async def edit_message(
@@ -393,12 +393,20 @@ async def edit_message(
         query = data.get("query")
         session_id = data.get("session_id")
         agent_id = data.get("agent_id")
-        user = verify_token(token)
     except Exception as e:
-        logger.exception("Failed to parse request or verify token")
-        raise HTTPException(status_code=400, detail="Invalid request or authentication.")
+        logger.exception("Failed to parse request JSON")
+        raise HTTPException(status_code=400, detail="Invalid request format.")
+
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.exception("Token verification failed")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
     session = sessions_db.find_one({"session_id": session_id})
     if not session:
@@ -413,11 +421,6 @@ async def edit_message(
     truncated_history = chat_history[:message_num]
     org_id = user.get("organization")
 
-    agent_doc = None
-    if agent_id:
-        if ObjectId.is_valid(agent_id):
-            agent_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
-
     try:
         agent_graph = await get_agent_graph(
             question=query,
@@ -426,10 +429,10 @@ async def edit_message(
             agent_id=agent_id
         )
     except Exception as e:
-        logger.exception("Exception in /ask/edit endpoint")
+        logger.exception("Exception in get_agent_graph (edit)")
         async def error_response(exc_msg):
-            yield f"Sorry, there was an error processing your request. Please try again later. Details: {exc_msg}"
-        return StreamingResponse(error_response(str(e)), media_type="text/plain")
+            yield f"Error while generating agent graph: {exc_msg}"
+        return StreamingResponse(error_response(str(e)), media_type="text/plain; charset=utf-8")
 
     graph = agent_graph.get("graph")
     agent_name = agent_graph.get("final_agent_name", "Unknown Agent")
@@ -442,8 +445,6 @@ async def edit_message(
             if graph:
                 try:
                     async for chunk in graph.astream({"messages": input_messages}):
-                        # Logging for each chunk
-                        logging.info(f"Chunk received: {chunk}")
                         contents = []
                         if isinstance(chunk, dict) and "agent" in chunk and isinstance(chunk["agent"], dict) and "messages" in chunk["agent"]:
                             agent_messages = chunk["agent"]["messages"]
@@ -470,7 +471,7 @@ async def edit_message(
                                 full_answer += content_piece
                 except Exception as exc:
                     logger.exception("Exception during streaming agent response (edit)")
-                    yield f"\n[Error: An error occurred while generating the response. Details: {str(exc)}]\n"
+                    yield f"\n[Error while streaming response: {str(exc)}]\n"
                     return
             else:
                 full_answer = f"[Default Agent Response] You asked: {query}"
@@ -485,7 +486,7 @@ async def edit_message(
         except Exception as exc:
             logger.exception("Exception in response_generator (edit)")
             yield f"\n[Internal error: {str(exc)}]\n"
-    return StreamingResponse(response_generator(), media_type="text/plain")
+    return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
 
 @router.get("/agents", response_model=List[Agent])
 def list_agents(token: str = Depends(oauth2_scheme)):
