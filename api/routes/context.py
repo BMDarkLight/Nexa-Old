@@ -84,57 +84,49 @@ def process_context_embedding(
                 sample = table_data.get("sample", [])[:10]
                 shape = table_data.get("shape", ())
                 dataframe = table_data.get("dataframe")
-                row_chunks = []
+                row_texts = []
                 if dataframe is not None:
                     for idx, row in dataframe.iterrows():
                         row_text = "; ".join([f"{col}: {row[col]}" for col in dataframe.columns])
-                        row_chunks.append(row_text)
+                        row_texts.append(row_text)
                 else:
-                    logger.warning("No dataframe found in table_data; skipping row chunk embedding.")
-                chunks_with_embeddings = []
-                if row_chunks:
-                    batch_size = 50
-                    for i in range(0, len(row_chunks), batch_size):
-                        batch = row_chunks[i:i+batch_size]
-                        batch_text = "\n".join(batch)
-                        chunks_with_embeddings.extend(embed(batch_text))
-                    logger.info(f"Generated embeddings for {len(row_chunks)} spreadsheet rows.")
-                else:
-                    logger.warning("No row chunks to embed for spreadsheet.")
-                if chunks_with_embeddings:
-                    context_id = save_embedding(
-                        chunks_with_embeddings,
-                        user_org_id,
-                        file_key=file_key,
-                        is_tabular=True
-                    )
-                    logger.info(f"Saved spreadsheet row embeddings to DB with context_id={context_id}")
-                    knowledge_db.update_one(
-                        {"_id": context_id},
-                        {"$set": {
-                            "file_key": file_key,
-                            "is_tabular": True,
-                            "structured_data": {
-                                "schema": schema,
-                                "sample": sample,
-                                "shape": shape
+                    logger.warning("No dataframe found in table_data; skipping row embedding.")
+                row_embeddings = []
+                inserted_row_ids = []
+                if row_texts:
+                    for row_idx, row_text in enumerate(row_texts):
+                        embedding = embed(row_text)
+                        if embedding:
+                            emb = embedding[0]
+                            doc = {
+                                "text": row_text,
+                                "embedding": emb["embedding"],
+                                "file_key": file_key,
+                                "is_tabular": True,
+                                "org": user_org_id
                             }
-                        }}
-                    )
+                            inserted_id = save_embedding([doc], user_org_id, file_key=file_key, is_tabular=True)
+                            inserted_row_ids.append(inserted_id)
+                        else:
+                            logger.warning(f"Failed to embed row {row_idx} in spreadsheet.")
+                    logger.info(f"Generated and saved embeddings for {len(inserted_row_ids)} spreadsheet rows.")
                 else:
-                    doc = {
-                        "file_key": file_key,
-                        "is_tabular": True,
-                        "org": user_org_id,
-                        "structured_data": {
-                            "schema": schema,
-                            "sample": sample,
-                            "shape": shape
-                        }
+                    logger.warning("No row texts to embed for spreadsheet.")
+                doc = {
+                    "file_key": file_key,
+                    "is_tabular": True,
+                    "org": user_org_id,
+                    "structured_data": {
+                        "schema": schema,
+                        "sample": sample,
+                        "shape": shape
                     }
-                    result = knowledge_db.insert_one(doc)
-                    context_id = result.inserted_id
-                    logger.info(f"Inserted spreadsheet structured data to DB with context_id={context_id} (no row embeddings)")
+                }
+                result = knowledge_db.insert_one(doc)
+                context_id = result.inserted_id
+                logger.info(f"Inserted spreadsheet structured data to DB with context_id={context_id}")
+                if inserted_row_ids:
+                    logger.info(f"Inserted spreadsheet row embeddings with row IDs: {inserted_row_ids}")
                 is_tabular = True
             else:
                 logger.error(f"Unsupported file type: {content_type}")
