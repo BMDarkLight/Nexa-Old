@@ -50,7 +50,6 @@ def _prepare_astream_input(graph, system_content, chat_history, query_text):
         return str(val).strip()
 
     if is_react:
-        # Robustly resolve system prompt for React agents
         resolved_system_content = system_content
         if not resolved_system_content:
             if hasattr(graph, "system_prompt") and getattr(graph, "system_prompt", None):
@@ -191,6 +190,18 @@ async def ask(
             chat_history=chat_history,
             agent_id=agent_id_to_use
         )
+        token_usage = agent_graph
+        logger.info(f"Token usage for this query: {token_usage}")
+        if session:
+            total_tokens = token_usage.get("total_tokens", 0)
+            sessions_db.update_one(
+                {"session_id": session_id},
+                {
+                    "$push": {"chat_history": {"user": query.query, "assistant": ""}},
+                    "$inc": {"token_usage.total_tokens": total_tokens}
+                },
+                upsert=True
+            )
     except Exception as e:
         logger.exception("Exception in get_agent_graph")
         async def error_response(exc_msg):

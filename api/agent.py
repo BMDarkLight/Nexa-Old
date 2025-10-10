@@ -80,110 +80,26 @@ def retrieve_relevant_context(
                 if not file_key:
                     logging.warning(f"Tabular doc #{idx} missing file_key.")
                     continue
-                logging.info(f"Processing tabular file: {file_key}")
-                try:
-                    obj = minio_client.get_object(bucket_name="context-files", object_name=file_key)
-                    file_bytes = obj.read()
-                    logging.info(f"Successfully read file {file_key} from MinIO.")
-                except Exception as e:
-                    logging.error(f"Failed to load tabular file {file_key}: {e}\n{traceback.format_exc()}")
-                    continue
-
-                rows_as_text = []
-                rows_as_columns = []
-                try:
-                    if file_key.lower().endswith(".csv"):
-                        df_iter = pd.read_csv(io.BytesIO(file_bytes), chunksize=1000)
-                        for chunk in df_iter:
-                            for _, row in chunk.iterrows():
-                                row_strs = []
-                                row_cols = []
-                                for col, val in row.items():
-                                    col_val_str = f"{col}: {val}"
-                                    row_strs.append(col_val_str)
-                                    row_cols.append((col, val, col_val_str))
-                                rows_as_text.append(" | ".join(row_strs))
-                                rows_as_columns.append(row_cols)
-                        logging.info(f"Extracted {len(rows_as_text)} rows from CSV {file_key}.")
-                    elif file_key.lower().endswith((".xls", ".xlsx")):
-                        df = pd.read_excel(io.BytesIO(file_bytes))
-                        for _, row in df.iterrows():
-                            row_strs = []
-                            row_cols = []
-                            for col, val in row.items():
-                                col_val_str = f"{col}: {val}"
-                                row_strs.append(col_val_str)
-                                row_cols.append((col, val, col_val_str))
-                            rows_as_text.append(" | ".join(row_strs))
-                            rows_as_columns.append(row_cols)
-                        logging.info(f"Extracted {len(rows_as_text)} rows from Excel {file_key}.")
-                    else:
-                        logging.warning(f"Unknown tabular file format for {file_key}. Skipping.")
-                        continue
-                except Exception as e:
-                    logging.error(f"Failed to parse tabular file {file_key}: {e}\n{traceback.format_exc()}")
-                    continue
+                logging.info(f"Processing tabular file (precomputed embeddings): {file_key}")
 
                 row_similarities = []
-                norm_question = _normalize_text(question_text)
-                question_norm_words = _split_to_norm_words(question_text)
-                substring_match_rows = set()
-                exact_match_rows = set()
-                for row_idx, (row_text, row_cols) in enumerate(zip(rows_as_text, rows_as_columns)):
-                    try:
-                        max_col_sim = None
-                        max_col_val = None
-                        col_sim_details = []
-                        row_exact_match = False
-                        row_substring_match = False
-                        for col, val, col_val_str in row_cols:
-                            norm_col_val = _normalize_text(val)
-                            boost = 0.0
-                            if norm_col_val and norm_question and norm_question in norm_col_val:
-                                boost += 2.0
-                                row_substring_match = True
-                            if norm_col_val and norm_col_val in question_norm_words:
-                                boost += 0.5
-                                row_exact_match = True
-                            elif norm_col_val and norm_col_val in norm_question:
-                                boost += 0.2
-                            col_emb = embed_question(col_val_str)
-                            sim = similarity(question_emb, col_emb)
-                            sim += boost
-                            col_sim_details.append((sim, col_val_str, boost))
-                            if max_col_sim is None or sim > max_col_sim:
-                                max_col_sim = sim
-                                max_col_val = col_val_str
-                        if row_exact_match:
-                            exact_match_rows.add(row_idx)
-                        if row_substring_match:
-                            substring_match_rows.add(row_idx)
-                        row_similarities.append((max_col_sim, row_text, row_exact_match, row_substring_match))
-                        logging.debug(
-                            f"[Tabular] file_key={file_key} row_idx={row_idx} max_col_sim={max_col_sim:.4f} | "
-                            f"max_col_val={max_col_val} | col_sim_details={col_sim_details} | "
-                            f"exact_match={row_exact_match} | substring_match={row_substring_match}"
-                        )
-                        if row_idx % 100 == 0:
-                            logging.debug(f"Processed {row_idx+1}/{len(rows_as_text)} rows for {file_key}.")
-                    except Exception as e:
-                        logging.error(f"Embedding/similarity error for row {row_idx} in {file_key}: {e}")
+                for row_doc in context_docs:
+                    if row_doc.get("file_key") == file_key and row_doc.get("embedding"):
+                        row_text = row_doc.get("text", "")
+                        row_emb = row_doc["embedding"]
+                        sim = similarity(question_emb, row_emb)
+                        row_similarities.append((sim, row_text))
                 if not row_similarities:
-                    logging.info(f"No rows found or embedded for tabular file {file_key}.")
+                    logging.info(f"No rows with embeddings found for tabular file {file_key}.")
                     continue
 
                 row_similarities.sort(reverse=True, key=lambda x: x[0])
                 top_rows_actual = row_similarities[:top_rows]
                 filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
-                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row, _, _ in top_rows_actual)
+                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row in top_rows_actual)
 
-                for sim, row, is_exact, is_substring in top_rows_actual:
-                    if is_substring:
-                        logging.info(f"Tabular retrieval [SUBSTRING MATCH]: file={file_key} row='{row}'")
-                    elif is_exact:
-                        logging.info(f"Tabular retrieval [EXACT MATCH]: file={file_key} row='{row}'")
-                    else:
-                        logging.info(f"Tabular retrieval [EMBEDDING SIMILARITY]: file={file_key} row='{row}'")
+                for sim, row in top_rows_actual:
+                    logging.info(f"Tabular retrieval: file={file_key} row='{row}'")
 
                 max_score = top_rows_actual[0][0] if top_rows_actual else 0
                 tabular_rows_scored.append((max_score, context_text))
@@ -419,7 +335,8 @@ async def get_agent_graph(
 
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
-        callback_manager = CallbackManager([TokenCountingCallbackHandler()])
+        token_handler = TokenCountingCallbackHandler()
+        callback_manager = CallbackManager([token_handler])
         agent_llm = LoggingChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
@@ -433,14 +350,22 @@ async def get_agent_graph(
 
         messages_dict = convert_messages_to_dict(messages_list)
 
+        token_usage = {
+            "prompt_tokens": getattr(token_handler, "prompt_tokens", 0),
+            "completion_tokens": getattr(token_handler, "completion_tokens", 0),
+            "total_tokens": getattr(token_handler, "total_tokens", 0)
+        }
+
         return {
             "graph": graph,
             "messages": messages_dict,
             "final_agent_name": final_agent_name,
             "final_agent_id": str(final_agent_id) if final_agent_id else None,
+            "token_usage": token_usage
         }
     else:
-        callback_manager = CallbackManager([TokenCountingCallbackHandler()])
+        token_handler = TokenCountingCallbackHandler()
+        callback_manager = CallbackManager([token_handler])
         agent_llm = LoggingChatOpenAI(
             model="gpt-4o-mini",
             streaming=True,
@@ -482,9 +407,12 @@ async def get_agent_graph(
 
         messages_dict = convert_messages_to_dict(messages_list)
 
+        token_usage = getattr(token_handler, "total_tokens", 0)
+
         return {
             "graph": graph,
             "messages": messages_dict,
             "final_agent_name": "Generalist",
             "final_agent_id": None,
+            "token_usage": token_usage
         }

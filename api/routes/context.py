@@ -93,8 +93,11 @@ def process_context_embedding(
                     logger.warning("No dataframe found in table_data; skipping row chunk embedding.")
                 chunks_with_embeddings = []
                 if row_chunks:
-                    for row_text in row_chunks:
-                        chunks_with_embeddings.extend(embed(row_text))
+                    batch_size = 50
+                    for i in range(0, len(row_chunks), batch_size):
+                        batch = row_chunks[i:i+batch_size]
+                        batch_text = "\n".join(batch)
+                        chunks_with_embeddings.extend(embed(batch_text))
                     logger.info(f"Generated embeddings for {len(row_chunks)} spreadsheet rows.")
                 else:
                     logger.warning("No row chunks to embed for spreadsheet.")
