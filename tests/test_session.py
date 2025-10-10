@@ -4,8 +4,10 @@ from unittest.mock import patch, AsyncMock
 import asyncio
 
 from api.main import app, pwd_context
-from api.database import users_db, sessions_db
+from api.database import users_db, sessions_db, orgs_db
 from api.agent import AIMessage
+
+from bson import ObjectId
 
 client = TestClient(app)
 
@@ -22,17 +24,26 @@ def clear_database():
 
 @pytest.fixture
 def authenticated_user():
-    """Create a test user and return auth token and user_id."""
+    """Create a test user and return auth token and user_id. Also insert a matching org."""
     password = "testpassword123"
+    org_id = ObjectId()
     user_doc = {
         "username": "test_user_session",
         "password": pwd_context.hash(password),
         "permission": "orguser",
         "status": "active",
-        "organization": "test_org_id"
+        "organization": str(org_id)
     }
     result = users_db.insert_one(user_doc)
     user_id = str(result.inserted_id)
+
+    # Insert matching org document
+    orgs_db.insert_one({
+        "_id": org_id,
+        "name": "Test Org",
+        "plan": "free",
+        "usage": 0
+    })
 
     response = client.post("/signin", data={"username": user_doc["username"], "password": password})
     assert response.status_code == 200

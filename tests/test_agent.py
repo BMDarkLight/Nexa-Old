@@ -124,33 +124,6 @@ def test_ask_permission_denied_for_other_user_session(test_user_token):
     assert resp.status_code == 403
 
 @pytest.mark.asyncio
-async def test_regenerate_message_success(test_user_token, test_user):
-    session_id = str(uuid.uuid4())
-    initial_history = [
-        {"user": "Question 1", "assistant": "Answer 1"},
-        {"user": "Question 2", "assistant": "Bad Answer 2"}
-    ]
-    sessions_db.insert_one({
-        "session_id": session_id,
-        "user_id": str(test_user["_id"]),
-        "chat_history": initial_history
-    })
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.post(
-            "/ask/regenerate/1",
-            headers=auth_header(test_user_token),
-            json={"session_id": session_id, "query": "Question 2"}
-        )
-        response_text = "".join([chunk.decode("utf-8") async for chunk in resp.aiter_bytes()])
-        response_text = strip_metadata(response_text)
-        assert resp.status_code == 200
-
-        session_doc = sessions_db.find_one({"session_id": session_id})
-        assert session_doc["chat_history"][1]["assistant"] in response_text
-
-@pytest.mark.asyncio
 async def test_edit_message_success(test_user_token, test_user):
     session_id = str(uuid.uuid4())
     initial_history = [

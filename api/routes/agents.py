@@ -10,7 +10,7 @@ import tiktoken
 
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry
 from api.agent import get_agent_graph
-from api.database import sessions_db, agents_db, connectors_db, knowledge_db, minio_client
+from api.database import sessions_db, agents_db, connectors_db, knowledge_db, orgs_db, minio_client
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate, agent_doc_to_model
 from api.embed import delete_embeddings
 from api.auth import verify_token, oauth2_scheme
@@ -153,6 +153,29 @@ async def ask(
     except Exception as e:
         logger.exception("Token verification failed")
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+    
+    org_id = user.get("organization")
+    
+    org = orgs_db.find_one({"_id": ObjectId(org_id)}) if org_id else None
+
+    if not org and user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="User does not belong to a valid organization.")
+    
+    usage = org.get("usage", 0) if org else 0
+    plan = org.get("plan", "free") if org else "free"
+    if plan == "free" and usage >= 500000:
+        return StreamingResponse(
+            iter(["شرکت شما به سقف استفاده در طرح رایگان رسیده است. لطفاً برای ادامه استفاده، طرح خود را ارتقا دهید."]),
+            media_type="text/plain; charset=utf-8"
+        )
+    elif plan == "enterprise" and usage >= 10000000:
+        return StreamingResponse(
+            iter(["شرکت شما به سقف استفاده رسیده است. لطفاً برای ادامه استفاده، طرح خود را ارتقا دهید."]),
+            media_type="text/plain; charset=utf-8"
+        )
+    elif plan != "free" and plan != "enterprise" and user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=500, detail="Invalid organization plan configuration.")
+
 
     agent_id_to_use = None
     agent_doc = None
@@ -258,6 +281,11 @@ async def ask(
                         "token_usage.total_tokens": total_tokens_used_including_system,
                     }
                 },
+                upsert=True
+            )
+            orgs_db.update_one(
+                {"_id": ObjectId(org_id)},
+                {"$inc": {"usage": total_tokens_used_including_system}},
                 upsert=True
             )
     return StreamingResponse(response_generator(), media_type="text/plain; charset=utf-8")
@@ -403,6 +431,11 @@ async def edit_message(
                             "token_usage.total_tokens": total_tokens_used_including_system,
                         }
                     },
+                    upsert=True
+                )
+                orgs_db.update_one(
+                    {"_id": ObjectId(org_id)},
+                    {"$inc": {"usage": total_tokens_used_including_system}},
                     upsert=True
                 )
         except Exception as exc:
@@ -555,3 +588,15 @@ def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=500, detail=f"Failed to delete agent: {str(e)}")
 
     return {"message": f"Agent '{agent_id}' deleted successfully."}
+
+@router.get("/usage")
+def get_usage(token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    
+    sessions = sessions_db.find({"user_id": str(user["_id"])})
+
+    usage: int = 0
+    for session in sessions:
+        usage += session.get("token_usage", {}).get("total_tokens", 0)
+    
+    return {"usage": usage}

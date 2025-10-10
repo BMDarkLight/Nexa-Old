@@ -206,3 +206,29 @@ def invite_signin(
         )
 
     return {"message": "Invited user signed up successfully."}
+
+@router.get("/organization/usage", response_model=dict)
+def get_organization_usage(token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    org_id = user.get("organization")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User does not belong to any organization")
+
+    organization = orgs_db.find_one({"_id": ObjectId(org_id)})
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if user.get("permission") not in ("orgadmin", "sysadmin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    usage = organization.get("usage", 0)
+    plan = organization.get("plan", "free")
+    quota = 10000000 if plan == "enterprise" else 500000 
+
+    return {"organization": organization["name"], "plan": plan, "usage": usage, "quota": quota}
