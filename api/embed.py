@@ -1,5 +1,6 @@
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.callbacks.manager import get_openai_callback
 from bson import ObjectId
 from datetime import datetime
 
@@ -62,12 +63,21 @@ def similarity(vec1, vec2):
     similarity = dot_product / (norm1 * norm2)
     return similarity
 
-def save_embedding(chunks_with_embeddings: list, org_id: ObjectId, metadata: dict = None) -> ObjectId:
+def save_embedding(
+    chunks_with_embeddings: list,
+    org_id: ObjectId,
+    metadata: dict = None,
+    file_key: str = None,
+    is_tabular: bool = False
+) -> ObjectId:
     document = {
         "org": org_id,
         "chunks": chunks_with_embeddings,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.utcnow(),
+        "is_tabular": is_tabular
     }
+    if file_key is not None:
+        document["file_key"] = file_key
     if metadata:
         document.update(metadata)
     result = knowledge_db.insert_one(document)

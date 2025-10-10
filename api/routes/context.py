@@ -1,11 +1,11 @@
-from fastapi import Depends, APIRouter, HTTPException, UploadFile, File
+from fastapi import Depends, APIRouter, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse
 from bson import ObjectId
 
 import io
 import logging
 
-from api.embed import embed, save_embedding, get_embeddings
+from api.embed import embed, save_embedding, get_embeddings, get_openai_callback
 from api.database import agents_db, knowledge_db, minio_client
 from api.auth import verify_token, oauth2_scheme
 from api.schemas.context import (
@@ -19,6 +19,135 @@ router = APIRouter(tags=["Context Management"])
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def process_context_embedding(
+    agent_id: str,
+    user_org_id,
+    file_content: bytes,
+    file_key: str,
+    file_name: str,
+    content_type: str,
+    logger,
+):
+    try:
+        logger.info(f"Background task: processing file for agent_id={agent_id}, filename={file_name}")
+        is_tabular = False
+        context_id = None
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        with get_openai_callback() as cb:
+            if content_type == "application/pdf":
+                text = extract_text_from_pdf(file_content)
+                if not text.strip():
+                    logger.error("No extractable text in PDF.")
+                    return
+                chunks_with_embeddings = embed(text)
+                logger.info(f"Generated embeddings for PDF: {len(chunks_with_embeddings)} chunks")
+                if not chunks_with_embeddings:
+                    logger.error("Failed to generate embeddings for PDF.")
+                    return
+                context_id = save_embedding(chunks_with_embeddings, user_org_id)
+                logger.info(f"Saved PDF embeddings to DB with context_id={context_id}")
+                knowledge_db.update_one(
+                    {"_id": context_id},
+                    {"$set": {"file_key": file_key, "is_tabular": False}}
+                )
+                logger.info(f"Updated knowledge_db for PDF context {context_id}")
+            elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                text = extract_text_from_docx(file_content)
+                if not text.strip():
+                    logger.error("No extractable text in DOCX.")
+                    return
+                chunks_with_embeddings = embed(text)
+                logger.info(f"Generated embeddings for DOCX: {len(chunks_with_embeddings)} chunks")
+                if not chunks_with_embeddings:
+                    logger.error("Failed to generate embeddings for DOCX.")
+                    return
+                context_id = save_embedding(chunks_with_embeddings, user_org_id)
+                logger.info(f"Saved DOCX embeddings to DB with context_id={context_id}")
+                knowledge_db.update_one(
+                    {"_id": context_id},
+                    {"$set": {"file_key": file_key, "is_tabular": False}}
+                )
+                logger.info(f"Updated knowledge_db for DOCX context {context_id}")
+            elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+                logger.error("PowerPoint upload not supported.")
+                return
+            elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or content_type == "text/csv":
+                if content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                    table_data = extract_table_from_excel(file_content)
+                else:
+                    table_data = extract_table_from_csv(file_content)
+                if not table_data:
+                    logger.error("No extractable table data in spreadsheet.")
+                    return
+                schema = table_data.get("schema", {})
+                sample = table_data.get("sample", [])[:10]
+                shape = table_data.get("shape", ())
+                dataframe = table_data.get("dataframe")
+                row_chunks = []
+                if dataframe is not None:
+                    for idx, row in dataframe.iterrows():
+                        row_text = "; ".join([f"{col}: {row[col]}" for col in dataframe.columns])
+                        row_chunks.append(row_text)
+                else:
+                    logger.warning("No dataframe found in table_data; skipping row chunk embedding.")
+                chunks_with_embeddings = []
+                if row_chunks:
+                    for row_text in row_chunks:
+                        chunks_with_embeddings.extend(embed(row_text))
+                    logger.info(f"Generated embeddings for {len(row_chunks)} spreadsheet rows.")
+                else:
+                    logger.warning("No row chunks to embed for spreadsheet.")
+                if chunks_with_embeddings:
+                    context_id = save_embedding(
+                        chunks_with_embeddings,
+                        user_org_id,
+                        file_key=file_key,
+                        is_tabular=True
+                    )
+                    logger.info(f"Saved spreadsheet row embeddings to DB with context_id={context_id}")
+                    knowledge_db.update_one(
+                        {"_id": context_id},
+                        {"$set": {
+                            "file_key": file_key,
+                            "is_tabular": True,
+                            "structured_data": {
+                                "schema": schema,
+                                "sample": sample,
+                                "shape": shape
+                            }
+                        }}
+                    )
+                else:
+                    doc = {
+                        "file_key": file_key,
+                        "is_tabular": True,
+                        "org": user_org_id,
+                        "structured_data": {
+                            "schema": schema,
+                            "sample": sample,
+                            "shape": shape
+                        }
+                    }
+                    result = knowledge_db.insert_one(doc)
+                    context_id = result.inserted_id
+                    logger.info(f"Inserted spreadsheet structured data to DB with context_id={context_id} (no row embeddings)")
+                is_tabular = True
+            else:
+                logger.error(f"Unsupported file type: {content_type}")
+                return
+            if context_id:
+                agents_db.update_one(
+                    {"_id": ObjectId(agent_id)},
+                    {"$push": {"context": context_id}}
+                )
+                logger.info(f"Updated agent {agent_id} with new context {context_id}")
+            token_usage["prompt_tokens"] = cb.prompt_tokens
+            token_usage["completion_tokens"] = cb.completion_tokens
+            token_usage["total_tokens"] = cb.total_tokens
+            logger.info(f"Token usage: prompt={cb.prompt_tokens}, completion={cb.completion_tokens}, total={cb.total_tokens}")
+    except Exception as e:
+        logger.exception(f"Background embedding/ingestion error for agent_id={agent_id}, filename={file_name}: {e}")
 
 @router.get("/agents/{agent_id}/context")
 def list_context_entries(agent_id: str, token: str = Depends(oauth2_scheme)):
@@ -138,7 +267,12 @@ def get_ingested_content(agent_id: str, context_id: str, token: str = Depends(oa
     return response
 
 @router.post("/agents/{agent_id}/context")
-async def upload_context_file(agent_id: str, file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
+async def upload_context_file(
+    agent_id: str,
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
+    token: str = Depends(oauth2_scheme),
+):
     try:
         logger.info(f"Starting upload_context_file for agent_id={agent_id}, filename={file.filename}")
         user = verify_token(token)
@@ -156,164 +290,37 @@ async def upload_context_file(agent_id: str, file: UploadFile = File(...), token
         logger.info(f"Processing file of type {content_type}")
         file_content = await file.read()
         logger.info(f"Read file content for {file.filename} ({len(file_content)} bytes)")
-        is_tabular = False
-        if content_type == "application/pdf":
-            text = extract_text_from_pdf(file_content)
-            if not text.strip():
-                logger.error("No extractable text in PDF.")
-                raise HTTPException(status_code=400, detail="The uploaded document contains no extractable text.")
-            chunks_with_embeddings = embed(text)
-            logger.info(f"Generated embeddings for PDF: {len(chunks_with_embeddings)} chunks")
-            if not chunks_with_embeddings:
-                logger.error("Failed to generate embeddings for PDF.")
-                raise HTTPException(status_code=500, detail="Failed to generate embeddings for the document.")
-            file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            logger.info(f"Saved PDF to MinIO with key {file_key}")
-            context_id = save_embedding(chunks_with_embeddings, ObjectId(user["organization"]))
-            logger.info(f"Saved PDF embeddings to DB with context_id={context_id}")
-            knowledge_db.update_one(
-                {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": False}}
-            )
-            logger.info(f"Updated knowledge_db for PDF context {context_id}")
-        elif content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            text = extract_text_from_docx(file_content)
-            if not text.strip():
-                logger.error("No extractable text in DOCX.")
-                raise HTTPException(status_code=400, detail="The uploaded document contains no extractable text.")
-            chunks_with_embeddings = embed(text)
-            logger.info(f"Generated embeddings for DOCX: {len(chunks_with_embeddings)} chunks")
-            if not chunks_with_embeddings:
-                logger.error("Failed to generate embeddings for DOCX.")
-                raise HTTPException(status_code=500, detail="Failed to generate embeddings for the document.")
-            file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            logger.info(f"Saved DOCX to MinIO with key {file_key}")
-            context_id = save_embedding(chunks_with_embeddings, ObjectId(user["organization"]))
-            logger.info(f"Saved DOCX embeddings to DB with context_id={context_id}")
-            knowledge_db.update_one(
-                {"_id": context_id},
-                {"$set": {"file_key": file_key, "is_tabular": False}}
-            )
-            logger.info(f"Updated knowledge_db for DOCX context {context_id}")
-        elif content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-            logger.error("PowerPoint upload not supported.")
-            raise HTTPException(status_code=400, detail="Support for PowerPoint not implemented yet.")
-        elif content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or content_type == "text/csv":
-            if content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-                table_data = extract_table_from_excel(file_content)
-            else:
-                table_data = extract_table_from_csv(file_content)
-            if not table_data:
-                logger.error("No extractable table data in spreadsheet.")
-                raise HTTPException(status_code=400, detail="The uploaded spreadsheet contains no extractable table data.")
-            file_key = f"context_files/{str(ObjectId())}_{file.filename}"
-            minio_client.put_object(
-                bucket_name="context-files",
-                object_name=file_key,
-                data=io.BytesIO(file_content),
-                length=len(file_content),
-                content_type=content_type
-            )
-            logger.info(f"Saved spreadsheet to MinIO with key {file_key}")
-            schema = table_data.get("schema", {})
-            sample = table_data.get("sample", [])[:10]
-            shape = table_data.get("shape", ())
-            dataframe = table_data.get("dataframe")
-            row_chunks = []
-            if dataframe is not None:
-                for idx, row in dataframe.iterrows():
-                    row_text = "; ".join([f"{col}: {row[col]}" for col in dataframe.columns])
-                    row_chunks.append(row_text)
-            else:
-                logger.warning("No dataframe found in table_data; skipping row chunk embedding.")
-            chunks_with_embeddings = []
-            if row_chunks:
-                for row_text in row_chunks:
-                    chunks_with_embeddings.extend(embed(row_text))
-                logger.info(f"Generated embeddings for {len(row_chunks)} spreadsheet rows.")
-            else:
-                logger.warning("No row chunks to embed for spreadsheet.")
-            if chunks_with_embeddings:
-                context_id = save_embedding(
-                    chunks_with_embeddings,
-                    ObjectId(user["organization"]),
-                    file_key=file_key,
-                    is_tabular=True
-                )
-                logger.info(f"Saved spreadsheet row embeddings to DB with context_id={context_id}")
-                knowledge_db.update_one(
-                    {"_id": context_id},
-                    {"$set": {
-                        "file_key": file_key,
-                        "is_tabular": True,
-                        "structured_data": {
-                            "schema": schema,
-                            "sample": sample,
-                            "shape": shape
-                        }
-                    }}
-                )
-            else:
-                doc = {
-                    "file_key": file_key,
-                    "is_tabular": True,
-                    "org": ObjectId(user["organization"]),
-                    "structured_data": {
-                        "schema": schema,
-                        "sample": sample,
-                        "shape": shape
-                    }
-                }
-                result = knowledge_db.insert_one(doc)
-                context_id = result.inserted_id
-                logger.info(f"Inserted spreadsheet structured data to DB with context_id={context_id} (no row embeddings)")
-            is_tabular = True
-        else:
-            logger.error(f"Unsupported file type: {content_type}")
-            raise HTTPException(status_code=400, detail="Unsupported file type.")
-        agents_db.update_one(
-            {"_id": ObjectId(agent_id)},
-            {"$push": {"context": context_id}}
+        file_key = f"context_files/{str(ObjectId())}_{file.filename}"
+        minio_client.put_object(
+            bucket_name="context-files",
+            object_name=file_key,
+            data=io.BytesIO(file_content),
+            length=len(file_content),
+            content_type=content_type
         )
-        logger.info(f"Updated agent {agent_id} with new context {context_id}")
-        logger.info(f"Returning success response for context_id={context_id}")
-        if is_tabular:
-            return JSONResponse(
-                status_code=201,
-                content={
-                    "message": "Context uploaded and processed successfully.",
-                    "context_id": str(context_id),
-                    "is_tabular": True
-                }
-            )
-        else:
-            return JSONResponse(
-                status_code=201,
-                content={
-                    "message": "Context uploaded and processed successfully.",
-                    "context_id": str(context_id),
-                    "is_tabular": False
-                }
-            )
+        logger.info(f"Saved file to MinIO with key {file_key}")
+        background_tasks.add_task(
+            process_context_embedding,
+            agent_id,
+            ObjectId(user["organization"]),
+            file_content,
+            file_key,
+            file.filename,
+            content_type,
+            logger
+        )
+        return JSONResponse(
+            status_code=202,
+            content={
+                "message": "File uploaded. Starting background processing.",
+                "file_key": file_key
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"An error occurred while processing the file for agent_id={agent_id}, filename={file.filename}")
-        raise HTTPException(status_code=500, detail=f"An error occurred while processing the file: {str(e)}")
+        logger.exception(f"An error occurred while uploading the file for agent_id={agent_id}, filename={file.filename}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while uploading the file: {str(e)}")
 
 @router.delete("/agents/{agent_id}/context/{context_id}")
 def delete_context_entry(agent_id: str, context_id: str, token: str = Depends(oauth2_scheme)):

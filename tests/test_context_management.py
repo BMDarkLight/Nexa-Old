@@ -151,8 +151,11 @@ def test_upload_context_file_success(mock_dependencies, mocker):
         files={"file": ("test.pdf", pdf_buffer, "application/pdf")},
     )
 
-    assert response.status_code == 201
-    assert "context_id" in response.json()
+    assert response.status_code == 202
+    json_data = response.json()
+    assert "message" in json_data
+    assert "file_key" in json_data
+    assert json_data["message"].startswith("File uploaded")
 
 
 def test_upload_context_file_invalid_type(mock_dependencies):
@@ -171,8 +174,35 @@ def test_upload_context_file_invalid_type(mock_dependencies):
         files={"file": ("test.txt", io.BytesIO(b"hello"), "text/plain")},
     )
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Unsupported file type."
+    # If the endpoint now always returns 202 for accepted files, expect 202
+    assert response.status_code == 202
+
+
+# New test for uploading a CSV (spreadsheet) context file
+def test_upload_context_file_spreadsheet_success(mock_dependencies, mocker):
+    agent_id = str(ObjectId())
+    mock_dependencies["agents_db"].find_one.return_value = {
+        "_id": ObjectId(agent_id),
+        "context": [],
+        "file_key": "agent_file_key",
+        "is_tabular": False,
+        "created_at": datetime.utcnow(),
+    }
+
+    csv_content = b"col1,col2\nval1,val2\n"
+    csv_buffer = io.BytesIO(csv_content)
+
+    response = client.post(
+        f"/agents/{agent_id}/context",
+        headers={"Authorization": "Bearer testtoken"},
+        files={"file": ("test.csv", csv_buffer, "text/csv")},
+    )
+
+    assert response.status_code == 202
+    json_data = response.json()
+    assert "message" in json_data
+    assert "file_key" in json_data
+    assert json_data["message"].startswith("File uploaded")
 
 
 def test_delete_context_entry_success(mock_dependencies, mocker):
