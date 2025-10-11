@@ -36,6 +36,7 @@ type SessionResponse = {
   session_id: string;
   chat_history: ChatMessage[];
   user_id: string;
+  title?: string | null;
 };
 interface Session {
   id: string;
@@ -80,20 +81,30 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         cache: "no-store",
       });
 
-      if (!res.ok) {
-        
-        return;
-      }
+      if (!res.ok) return;
 
       const data: SessionResponse[] = await res.json();
-      const dataArr: Session[] = data.map((item) => ({
-        id: item.session_id,
-        title: item.chat_history?.[0]?.user || "گفتگو بدون عنوان",
-      }));
+
+      const dataArr: Session[] = data.map((item) => {
+        let titleText = "گفتگو جدید";
+
+        if (item.title && typeof item.title === "string" && item.title.trim() !== "") {
+          titleText = item.title;
+        }
+
+        if (titleText.length > 20) {
+          titleText = titleText.slice(0, 15) + "…";
+        }
+
+        return {
+          id: item.session_id,
+          title: titleText,
+        };
+      });
 
       setSession(dataArr.reverse());
     } catch {
-      alert("خطا در ارتباط با سرور. لطفاً اتصال خود را بررسی کنید");
+      console.error("خطا در دریافت گفتگوها");
     }
   };
 
@@ -108,6 +119,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }, [pathname]);
 
   React.useEffect(() => {
+    const interval = setInterval(() => {
+      fetchSessions();
+    }, 10000); // هر 10 ثانیه
+    return () => clearInterval(interval);
+  }, [authHeader]);
+
+  React.useEffect(() => {
     if (!authHeader) return;
     const fetchUserEmail = async () => {
       try {
@@ -118,16 +136,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           },
           cache: "no-store",
         });
-        if (!res.ok) {
-          
-          return;
-        }
+        if (!res.ok) return;
         const data: UserData[] = await res.json();
         if (Array.isArray(data) && data.length > 0) {
           setUserEmail(data[0].email || "m@example.com");
         }
       } catch {
-        alert("خطا در ارتباط با سرور. لطفاً دوباره تلاش کنید");
+        console.error("خطا در دریافت اطلاعات کاربر");
       }
     };
     fetchUserEmail();

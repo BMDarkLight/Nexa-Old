@@ -25,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import Swal from "sweetalert2";
 
 export function NavProjects({
   projects,
@@ -41,42 +42,72 @@ export function NavProjects({
   const { isMobile } = useSidebar();
   const pathname = usePathname();
   const [openWallet, setOpenWallet] = useState(false);
-  const [credit, setCredit] = useState<number>(0);
 
-  const handleLogout = async () => {
-    const confirmed = window.confirm("آیا مطمئن هستید که می‌خواهید از حساب خود خارج شوید؟");
-    if (confirmed) {
-      Cookie.remove("auth_token");
-      Cookie.remove("token_type");
-      window.location.href = "/login";
+  const [usagePercent, setUsagePercent] = useState<number>(0);
+
+  const fetchUsage = async () => {
+    try {
+      const token = Cookie.get("auth_token");
+      const tokenType = Cookie.get("token_type") ?? "Bearer";
+      if (!token) return;
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4"}:${
+          process.env.NEXT_PUBLIC_API_PORT ?? "8000"
+        }/organization/usage`,
+        {
+          headers: {
+            Authorization: `${tokenType} ${token}`,
+          },
+        }
+      );
+
+      if (!res.ok) throw new Error("خطا در دریافت میزان مصرف سازمان");
+
+      const data = await res.json();
+      const { usage, quota } = data;
+
+      if (quota > 0) {
+        const percent = Math.min((usage / quota) * 100, 100);
+        setUsagePercent(percent);
+      } else {
+        setUsagePercent(0);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("خطا در دریافت میزان مصرف سازمان", {
+        style: { background: "#DC2626", color: "#fff" },
+      });
     }
   };
 
-  // const fetchCredit = async () => {
-  //   try {
-  //     const token = Cookie.get("auth_token");
-  //     const tokenType = Cookie.get("token_type") ?? "Bearer";
+  useEffect(() => {
+    if (openWallet) fetchUsage();
+  }, [openWallet]);
 
-  //     const res = await fetch(`${process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4"}:${process.env.NEXT_PUBLIC_API_PORT ?? "8000"}/users/credit`, {
-  //       headers: {
-  //         Authorization: `${tokenType} ${token}`,
-  //       },
-  //     });
-
-  //     if (!res.ok) throw new Error("خطا در دریافت اعتبار");
-  //     const data = await res.json();
-  //     setCredit(data.credit ?? 0);
-  //   } catch (err) {
-  //     console.error(err);
-  //     toast.error("خطا در دریافت میزان اعتبار", {
-  //       style: { background: "#DC2626", color: "#fff" },
-  //     });
-  //   }
-  // };
-
-  // useEffect(() => {
-  //   if (openWallet) fetchCredit();
-  // }, [openWallet]);
+  const handleLogout = async () => {
+     const result = await Swal.fire({
+      title : "خروج از حساب" ,
+      text: "آیا مطمئن هستید که می‌خواهید از حساب کاربری خود خارج شوید؟",
+      showCancelButton: true,
+      cancelButtonText: "انصراف",
+      confirmButtonText: "خروج",
+      reverseButtons : true ,
+      customClass : {
+        popup : "swal-rtl" ,
+        title : "swal-title" , 
+        confirmButton : "swal-confirm-btn swal-half-btn" , 
+        cancelButton : "swal-cancel-btn swal-half-btn" ,
+        htmlContainer : "swal-text" , 
+        actions : "swal-container"
+      }
+    })
+    if(result.isConfirmed){
+      Cookie.remove("auth_token")
+      Cookie.remove("token_type")
+      window.location.href = "/login"
+    }
+  };
 
   return (
     <>
@@ -139,7 +170,7 @@ export function NavProjects({
 
             <div>
               <h4 className="text-sm font-semibold text-slate-900 mb-2">اعتبار باقی‌مانده</h4>
-              <Progress value={credit} className="h-2" />
+              <Progress value={usagePercent} className="h-2" />
             </div>
           </div>
         </DialogContent>
