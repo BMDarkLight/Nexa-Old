@@ -16,6 +16,7 @@ const End_point: string = "/signup";
 const API_PORT: string = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 type SignUpFormInputs = {
+  fullname: string;
   username: string;
   email: string;
   phone: string;
@@ -24,13 +25,21 @@ type SignUpFormInputs = {
   cpassword: string;
 };
 
+// Validation Schema
 const validationSchema = Yup.object().shape({
-  username: Yup.string()
+  fullname: Yup.string()
     .required("لطفاً نام و نام خانوادگی را وارد کنید.")
     .min(3, "نام و نام خانوادگی باید حداقل ۳ کاراکتر باشد.")
     .matches(
       /^[a-zA-Zآ-ی\s]+$/,
       "نام و نام خانوادگی فقط می‌تواند شامل حروف فارسی یا انگلیسی باشد."
+    ),
+  username: Yup.string()
+    .required("لطفاً نام کاربری را وارد کنید.")
+    .min(3, "نام کاربری باید حداقل ۳ کاراکتر باشد.")
+    .matches(
+      /^[a-zA-Z0-9_]+$/,
+      "نام کاربری فقط می‌تواند شامل حروف انگلیسی باشد."
     ),
   email: Yup.string()
     .required("لطفاً ایمیل را وارد کنید.")
@@ -68,7 +77,8 @@ export default function SignUpInputs() {
 
   const onSubmit: SubmitHandler<SignUpFormInputs> = async (data) => {
     try {
-      const nameParts = data.username.trim().split(" ");
+      // 🔹 تقسیم نام کامل به نام و نام خانوادگی
+      const nameParts = data.fullname.trim().split(" ");
       const firstname = nameParts[0] || "";
       const lastname = nameParts.slice(1).join(" ") || "";
 
@@ -156,12 +166,28 @@ export default function SignUpInputs() {
 
         <div className="flex flex-col gap-6">
           <div className="grid gap-3">
-            <Label htmlFor="username">
+            <Label htmlFor="fullname">
               نام و نام خانوادگی<span className="text-[#EF4444]">*</span>
+            </Label>
+            <Input
+              id="fullname"
+              type="text"
+              {...register("fullname")}
+              className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            />
+            {errors.fullname && (
+              <p className="text-red-500 text-xs">{errors.fullname.message}</p>
+            )}
+          </div>
+
+          <div className="grid gap-3">
+            <Label htmlFor="username">
+              نام کاربری<span className="text-[#EF4444]">*</span>
             </Label>
             <Input
               id="username"
               type="text"
+              placeholder="فقط حروف انگلیسی یا عدد"
               {...register("username")}
               className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
             />
@@ -170,6 +196,7 @@ export default function SignUpInputs() {
             )}
           </div>
 
+          {/* فیلدهای دیگر بدون تغییر */}
           <div className="grid gap-3">
             <Label htmlFor="email">
               ایمیل<span className="text-[#EF4444]">*</span>

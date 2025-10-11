@@ -141,7 +141,25 @@ export default function ValidateInputs() {
   return (
     <form onSubmit={handleSubmit(onSubmit)}>
       <div className="flex flex-col gap-6">
-        <LoginHeader title="ورود به نکسا" subTitle="" headerLink="" />
+        <div className="flex flex-col items-center gap-2">
+          <a href="#" className="flex flex-col items-center gap-2 font-medium">
+            <div className="flex size-8 items-center justify-center rounded-md">
+              <picture>
+                <img src="/Squad/Login/Logo.png" alt="" />
+              </picture>
+            </div>
+          </a>
+          <h1 className="text-xl font-bold">ورود به نکسا</h1>
+          <div className="text-center text-sm">
+            حساب کاربری ندارید؟
+            <Link
+              href="/signup"
+              className="underline underline-offset-4 hover:text-primary transition-all duration-500 mr-1"
+            >
+              ثبت نام کنید
+            </Link>
+          </div>
+        </div>
         <div className="flex flex-col gap-6">
           <div className="grid gap-3">
             <Label htmlFor="username">
