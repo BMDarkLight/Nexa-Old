@@ -77,9 +77,15 @@ def process_context_embedding(
                     table_data = extract_table_from_excel(file_content)
                 else:
                     table_data = extract_table_from_csv(file_content)
+                
+                if table_data.get("shape", (0, 0))[0] > 300:
+                    logger.error("Spreadsheet exceeds 300-row limit.")
+                    raise HTTPException(status_code=400, detail="Spreadsheet exceeds limit of 300 rows.")
+
                 if not table_data:
                     logger.error("No extractable table data in spreadsheet.")
-                    return
+                    raise HTTPException(status_code=400, detail="Unrecognizable spreadsheet format.")
+                
                 schema = table_data.get("schema", {})
                 sample = table_data.get("sample", [])[:10]
                 shape = table_data.get("shape", ())
