@@ -50,7 +50,11 @@ def _load_spreadsheet(file_content: bytes, file_type: str) -> pd.DataFrame:
     if file_type == 'excel':
         return pd.read_excel(io.BytesIO(file_content), engine='openpyxl')
     elif file_type == 'csv':
-        return pd.read_csv(io.BytesIO(file_content))
+        try:
+            return pd.read_csv(io.BytesIO(file_content))
+        except UnicodeDecodeError:
+            logger.warning("CSV not UTF-8 encoded; using latin1 fallback.")
+            return pd.read_csv(io.BytesIO(file_content), encoding='latin1')
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
