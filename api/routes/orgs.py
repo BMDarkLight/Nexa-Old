@@ -23,7 +23,7 @@ def organization(token: str = Depends(oauth2_scheme)):
     if user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="Permission denied")
     
-    return orgs_db.find({}, {"_id": 0})
+    return {"organizations": list(orgs_db.find({}, {"_id": 0}))}
 
 @router.get("/organizations/{name}", response_model=dict)
 def get_organization(name: str, token: str = Depends(oauth2_scheme)):
