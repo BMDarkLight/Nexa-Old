@@ -65,13 +65,19 @@ def retrieve_relevant_context(
     The result merges tabular agent outputs with the text-based top-n chunks.
     """
 
+    logger = logging.getLogger("context_retriever")
+    logger.debug("Starting retrieval of relevant context for question: %r", question)
+
     if not context_docs or not question:
+        logger.warning("No context_docs or question provided to retrieve_relevant_context.")
         return "⚠️ No relevant context found for this question."
 
     question_text = question if isinstance(question, str) else " ".join(question)
     try:
         question_emb = embed_question(question_text)
-    except Exception:
+        logger.debug("Successfully embedded question.")
+    except Exception as exc:
+        logger.error("Failed to embed question: %s", exc)
         return "⚠️ No relevant context found for this question."
 
     tabular_context_outputs = []
@@ -82,33 +88,41 @@ def retrieve_relevant_context(
         try:
             doc_is_tabular = doc.get("is_tabular", False)
             file_key = doc.get("file_key", None)
+            doc_type = "tabular" if doc_is_tabular else "text"
+            logger.debug("Processing doc #%d: file_key=%r, type=%s", idx, file_key, doc_type)
             if doc_is_tabular and file_key:
                 tabular_file_keys.add(file_key)
+                logger.debug("Document is tabular, will process with Pandas agent later: file_key=%r", file_key)
                 continue
 
             if "chunks" in doc and isinstance(doc["chunks"], list):
-                for chunk in doc["chunks"]:
+                logger.debug("Document contains %d chunks.", len(doc["chunks"]))
+                for chunk_idx, chunk in enumerate(doc["chunks"]):
                     chunk_text = chunk.get("text", "")
                     if not chunk_text.strip():
+                        logger.debug("Skipping empty chunk #%d in doc #%d.", chunk_idx, idx)
                         continue
                     try:
                         chunk_emb = chunk.get("embedding") or embed_question(chunk_text[:2000])
                         sim = similarity(question_emb, chunk_emb)
                         text_chunks_scored.append((sim, chunk_text))
-                    except Exception:
-                        pass
+                        logger.debug("Chunk #%d in doc #%d: similarity=%.4f", chunk_idx, idx, sim)
+                    except Exception as exc:
+                        logger.warning("Failed to embed/score chunk #%d in doc #%d: %s", chunk_idx, idx, exc)
             elif doc.get("text"):
                 chunk_text = doc["text"]
                 try:
                     chunk_emb = doc.get("embedding") or embed_question(chunk_text[:2000])
                     sim = similarity(question_emb, chunk_emb)
                     text_chunks_scored.append((sim, chunk_text))
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                    logger.debug("Single text doc #%d: similarity=%.4f", idx, sim)
+                except Exception as exc:
+                    logger.warning("Failed to embed/score single text doc #%d: %s", idx, exc)
+        except Exception as exc:
+            logger.error("Exception processing doc #%d: %s", idx, exc)
 
     for file_key in tabular_file_keys:
+        logger.info("Processing tabular file: file_key=%r", file_key)
         tabular_docs = [doc for doc in context_docs if doc.get("file_key") == file_key and doc.get("is_tabular", False)]
         df = None
         filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
@@ -120,7 +134,9 @@ def retrieve_relevant_context(
         if data_json:
             try:
                 df = pd.read_json(data_json, orient="split")
-            except Exception:
+                logger.debug("Loaded DataFrame from data_json for file: %s, shape=%s", filename, df.shape)
+            except Exception as exc:
+                logger.error("Failed to load DataFrame from data_json for file_key %r: %s", file_key, exc)
                 df = None
         if df is None and tabular_docs:
             rows = []
@@ -136,43 +152,56 @@ def retrieve_relevant_context(
                             values = [v.strip() for v in doc["text"].split(",")]
                             row_dict = dict(zip(header, values))
                             rows.append(row_dict)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to parse row from text in tabular doc: %s", exc)
             if rows:
                 try:
                     df = pd.DataFrame(rows)
-                except Exception:
+                    logger.debug("Constructed DataFrame from rows for file: %s, shape=%s", filename, df.shape)
+                except Exception as exc:
+                    logger.error("Failed to construct DataFrame from rows for file_key %r: %s", file_key, exc)
                     df = None
         if df is not None and not df.empty:
             try:
-                # Use Pandas agent to answer the question about the DataFrame
-                # Use a small, low-cost model for table analysis
+                logger.info("Invoking Pandas agent on tabular file: %s", filename)
                 pandas_llm = PandasChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-                pandas_agent = create_pandas_dataframe_agent(pandas_llm, df, verbose=False)
+                pandas_agent = create_pandas_dataframe_agent(
+                    pandas_llm, df, verbose=False, allow_dangerous_code=True
+                )
                 tabular_prompt = (
                     f"The following table is from '{filename}'. "
                     f"Given the user's question, answer using only this table's data. "
                     f"User's question: {question_text}"
                 )
                 agent_response = pandas_agent.invoke(tabular_prompt)
-                # Compose result
+                logger.info("Pandas agent completed for file: %s", filename)
                 tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
-            except Exception:
-                logging.error(f"Failed to process tabular data for file_key {file_key}:\n{traceback.format_exc()}")
+            except Exception as exc:
+                logger.error(f"Failed to process tabular data for file_key {file_key}:\n{traceback.format_exc()}")
+        else:
+            logger.warning("No valid DataFrame found for tabular file: %s", filename)
 
     selected_contexts = []
     if text_chunks_scored:
         text_chunks_scored.sort(reverse=True, key=lambda x: x[0])
+        logger.info("Sorted %d text chunks by similarity.", len(text_chunks_scored))
         top_text_chunks = text_chunks_scored[:top_n]
-        for sim, text in top_text_chunks:
+        for i, (sim, text) in enumerate(top_text_chunks):
+            logger.debug("Selected top text chunk #%d with similarity %.4f", i, sim)
             selected_contexts.append(text)
 
     if tabular_context_outputs:
+        logger.info("Appending %d tabular context outputs.", len(tabular_context_outputs))
         selected_contexts.extend(tabular_context_outputs)
 
     if not selected_contexts:
+        logger.warning("No relevant context found after processing all docs.")
         return "⚠️ No relevant context found for this question."
 
+    logger.info("Returning %d selected context blocks (text: %d, tabular: %d).",
+                len(selected_contexts),
+                len(text_chunks_scored[:top_n]),
+                len(tabular_context_outputs))
     final_context = "\n\n".join(selected_contexts)
     return final_context
 
