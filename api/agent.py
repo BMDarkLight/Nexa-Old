@@ -315,6 +315,7 @@ async def get_agent_graph(
 
         context_docs = []
         context_text = ""
+        logger = logging.getLogger("context_retriever")
         for context_entry_id in context_ids:
             entry_doc = knowledge_db.find_one({"_id": ObjectId(context_entry_id)})
             if not entry_doc:
@@ -324,17 +325,17 @@ async def get_agent_graph(
 
             if entry_doc.get("is_tabular", False):
                 entry_exp = "The data is structured as a tabular CSV DataFrame. Use the provided data to answer questions accurately.\n"
-                df = None
                 data_json = entry_doc.get("data_json")
+                logger.info("Tabular context detected for file_key %s", entry_doc.get("file_key"))
                 if data_json:
-                    from io import StringIO
-                    try:
-                        df = pd.read_json(StringIO(data_json), orient="split")
-                        logger = logging.getLogger("context_retriever")
-                        logger.info("Added DataFrame to context_docs for file_key %s with shape %s", entry_doc.get("file_key"), df.shape)
-                        context_docs.append({"df": df, "file_key": entry_doc.get("file_key")})
-                    except Exception as e:
-                        logger.error("Failed to read data_json for file_key %s: %s", entry_doc.get("file_key"), e)
+                    logger.info("Adding tabular entry to context_docs with data_json for file_key %s", entry_doc.get("file_key"))
+                    context_docs.append({
+                        "data_json": data_json,
+                        "file_key": entry_doc.get("file_key"),
+                        "is_tabular": True
+                    })
+                else:
+                    logger.warning("No data_json found for tabular context entry with file_key %s", entry_doc.get("file_key"))
             else:
                 entry_exp = "The data is text, it is likely a document that you have access to. Use the provided context from the file to answer question accordingly.\n"
                 if "chunks" in entry_doc:
