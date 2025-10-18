@@ -7,6 +7,7 @@ from typing import List
 import datetime
 import logging
 import tiktoken
+import uuid
 
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry
 from api.agent import get_agent_graph
@@ -180,18 +181,21 @@ async def ask(
     agent_id_to_use = None
     agent_doc = None
     if query.agent_id:
-        if not ObjectId.is_valid(query.agent_id):
+        if not ObjectId.is_valid(query.agent_id) and query.agent_id != "auto" and query.agent_id != "generalist":
             raise HTTPException(status_code=400, detail="Invalid agent ID format.")
-        agent_oid = ObjectId(query.agent_id)
-        agent_query = {"_id": agent_oid}
-        if user.get("permission") != "sysadmin":
-            agent_query["org"] = ObjectId(user["organization"])
-        agent_doc = agents_db.find_one(agent_query)
-        if not agent_doc:
-            raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
-        agent_id_to_use = str(agent_oid)
+        
+        if query.agent_id == "auto" or query.agent_id == "generalist":
+            agent_id_to_use = query.agent_id
+        else:
+            agent_oid = ObjectId(query.agent_id)
+            agent_query = {"_id": agent_oid}
+            if user.get("permission") != "sysadmin":
+                agent_query["org"] = ObjectId(user["organization"])
+            agent_doc = agents_db.find_one(agent_query)
+            if not agent_doc:
+                raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
+            agent_id_to_use = str(agent_oid)
 
-    import uuid
     session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})
     if session and session.get("user_id") != str(user["_id"]):

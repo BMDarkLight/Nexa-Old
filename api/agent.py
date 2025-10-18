@@ -195,27 +195,30 @@ async def get_agent_graph(
     selected_agent = None
 
     if agent_id:
-        selected_agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": organization_id})
-    elif agent_id == "auto":
-        agents = list(agents_db.find({"org": organization_id}))
-        if agents:
-            agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in agents])
-            router_prompt = [
-                SystemMessage(
-                    content=(
-                        "You are an expert at routing a user's request to the correct agent. "
-                        "Based on the user's question, select the best agent from the following list. "
-                        "You must output **only the name** of the agent you choose. "
-                        "If no agent seems suitable, output 'Generalist'."
-                        f"\n\nAvailable Agents:\n{agent_descriptions}"
-                    )
-                ),
-                HumanMessage(content=question),
-            ]
-            router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-            selected_agent_name_response = await router_llm.ainvoke(router_prompt)
-            selected_agent_name = selected_agent_name_response.content.strip()
-            selected_agent = next((agent for agent in agents if agent["name"] == selected_agent_name), None)
+        if agent_id == "auto":
+            agents = list(agents_db.find({"org": organization_id}))
+            if agents:
+                agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in agents])
+                router_prompt = [
+                    SystemMessage(
+                        content=(
+                            "You are an expert at routing a user's request to the correct agent. "
+                            "Based on the user's question, select the best agent from the following list. "
+                            "You must output **only the name** of the agent you choose. "
+                            "If no agent seems suitable, output 'Generalist'."
+                            f"\n\nAvailable Agents:\n{agent_descriptions}"
+                        )
+                    ),
+                    HumanMessage(content=question),
+                ]
+                router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+                selected_agent_name_response = await router_llm.ainvoke(router_prompt)
+                selected_agent_name = selected_agent_name_response.content.strip()
+                selected_agent = next((agent for agent in agents if agent["name"] == selected_agent_name), None)
+        elif agent_id == "generalist":
+            selected_agent = None
+        else:
+            selected_agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": organization_id})
     else:
         selected_agent = None
 
