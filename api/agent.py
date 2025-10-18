@@ -324,18 +324,17 @@ async def get_agent_graph(
 
             if entry_doc.get("is_tabular", False):
                 entry_exp = "The data is structured as a tabular CSV DataFrame. Use the provided data to answer questions accurately.\n"
-                file_key = entry_doc.get("file_key")
+                df = None
                 data_json = entry_doc.get("data_json")
-                if data_json and file_key:
+                if data_json:
+                    from io import StringIO
                     try:
-                        df = pd.read_json(data_json, orient="split")
-                        tmp_csv_path = f"/tmp/{file_key}.csv"
-                        df.to_csv(tmp_csv_path, index=False)
-                        loader = CSVLoader(file_path=tmp_csv_path)
-                        csv_docs = loader.load()
-                        context_docs.extend(csv_docs)
+                        df = pd.read_json(StringIO(data_json), orient="split")
+                        logger = logging.getLogger("context_retriever")
+                        logger.info("Added DataFrame to context_docs for file_key %s with shape %s", entry_doc.get("file_key"), df.shape)
+                        context_docs.append({"df": df, "file_key": entry_doc.get("file_key")})
                     except Exception as e:
-                        pass
+                        logger.error("Failed to read data_json for file_key %s: %s", entry_doc.get("file_key"), e)
             else:
                 entry_exp = "The data is text, it is likely a document that you have access to. Use the provided context from the file to answer question accordingly.\n"
                 if "chunks" in entry_doc:
