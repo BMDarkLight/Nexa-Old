@@ -10,7 +10,7 @@ import tiktoken
 
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry
 from api.agent import get_agent_graph
-from api.database import sessions_db, agents_db, connectors_db, knowledge_db, orgs_db, minio_client
+from api.database import sessions_db, agents_db, connectors_db, knowledge_db, orgs_db, users_db, minio_client
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate, agent_doc_to_model
 from api.embed import delete_embeddings
 from api.auth import verify_token, oauth2_scheme
@@ -285,6 +285,11 @@ async def ask(
             )
             orgs_db.update_one(
                 {"_id": ObjectId(org_id)},
+                {"$inc": {"usage": total_tokens_used_including_system}},
+                upsert=True
+            )
+            users_db.update_one(
+                {"_id": ObjectId(user["_id"])},
                 {"$inc": {"usage": total_tokens_used_including_system}},
                 upsert=True
             )
@@ -593,10 +598,8 @@ def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
 def get_usage(token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
     
-    sessions = sessions_db.find({"user_id": str(user["_id"])})
-
-    usage: int = 0
-    for session in sessions:
-        usage += session.get("token_usage", {}).get("total_tokens", 0)
+    usage = users_db.find_one({"_id": ObjectId(user["_id"])}, {"usage": 1})
+    if not usage:
+        return {"usage": 0}
     
-    return {"usage": usage}
+    return {"usage": usage.get("usage", 0)}
