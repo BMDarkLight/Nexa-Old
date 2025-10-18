@@ -6,10 +6,13 @@ import uuid
 import json
 import types
 import pytest
+import pandas as pd
 
 from api.main import app, pwd_context
 from api.database import users_db, orgs_db, sessions_db
 from langchain.schema import HumanMessage, AIMessage
+from langchain.chat_models import ChatOpenAI
+from langchain_experimental.agents import create_pandas_dataframe_agent
 
 client = TestClient(app)
 
@@ -198,16 +201,28 @@ def initialize_agent(tools, llm, agent_type=None, **kwargs):
     return MockAgent(tools, llm)
 
 
-# Test the agent's retrieval functionality with a mock retriever and mock LLM
-def test_agent_retrieval_functionality_with_mock():
-    retriever = mock_retriever_tool()
-    llm = MockLLM()
-    agent = initialize_agent([retriever], llm)
-    query = "What is organizational AI?"
-    result = agent.run(query)
-    # Check that retriever was called with the query
-    assert retriever.called_with == [query]
-    # Check that the agent returns a response string containing expected text
-    assert "Agent result:" in result
-    assert "LLM response to:" in result
-    assert "organizational AI" in result
+# Test the agent's retrieval functionality with a real pandas DataFrame and ChatOpenAI
+@pytest.mark.asyncio
+async def test_agent_retrieval_functionality_with_dataframe():
+    # Create a small sample DataFrame representing CSV data
+    data = {
+        "Name": ["Roy Berry", "Alice Smith", "Bob Johnson"],
+        "Age": [34, 28, 45],
+        "Occupation": ["Engineer", "Data Scientist", "Manager"]
+    }
+    df = pd.DataFrame(data)
+
+    # Use ChatOpenAI with low temperature for deterministic output
+    llm = ChatOpenAI(temperature=0)
+
+    # Create a pandas dataframe agent
+    agent = create_pandas_dataframe_agent(llm, df, verbose=False, allow_dangerous_code=True)
+
+    # Query the agent about a user
+    query = "List all information about the user whose name is 'Roy Berry'."
+    response = agent.run(query)
+
+    # Assert that the response mentions Roy Berry and contains relevant information
+    assert "Roy Berry" in response
+    assert "Engineer" in response
+    assert "34" in response
