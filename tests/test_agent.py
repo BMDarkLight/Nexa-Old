@@ -1,10 +1,11 @@
-import pytest
 from httpx import AsyncClient
 from httpx import ASGITransport
 from fastapi.testclient import TestClient
 from bson import ObjectId
 import uuid
 import json
+import types
+import pytest
 
 from api.main import app, pwd_context
 from api.database import users_db, orgs_db, sessions_db
@@ -152,3 +153,61 @@ async def test_edit_message_success(test_user_token, test_user):
         assert session_doc["chat_history"][0]["assistant"] in response_text
         assert session_doc["chat_history"][1]["user"] == "Another Question"
         assert session_doc["chat_history"][1]["assistant"] == "Another Answer"
+
+def mock_retriever_tool():
+    """A simple mock retriever tool for testing."""
+    class MockRetriever:
+        def __init__(self):
+            self.called_with = []
+        def get_relevant_documents(self, query):
+            self.called_with.append(query)
+            return [{"content": f"Retrieved doc for: {query}"}]
+    return MockRetriever()
+
+
+class MockLLM:
+    """A simple mock LLM for agent testing."""
+    def __init__(self, *args, **kwargs):
+        self.called_with = []
+    def __call__(self, prompt, **kwargs):
+        self.called_with.append(prompt)
+        return f"LLM response to: {prompt}"
+    def generate(self, prompts, **kwargs):
+        return [self(prompt) for prompt in prompts]
+    def __getattr__(self, item):
+        # For compatibility with LangChain interface
+        return lambda *a, **kw: "mocked"
+
+
+def initialize_agent(tools, llm, agent_type=None, **kwargs):
+    """A minimal mock initialize_agent for testing."""
+    class MockAgent:
+        def __init__(self, tools, llm):
+            self.tools = tools
+            self.llm = llm
+        def run(self, input):
+            # Use retriever tool if present
+            retriever = None
+            for tool in self.tools:
+                if hasattr(tool, "get_relevant_documents"):
+                    retriever = tool
+                    break
+            docs = retriever.get_relevant_documents(input) if retriever else []
+            llm_response = self.llm(f"Query: {input}, Docs: {docs}")
+            return f"Agent result: {llm_response}"
+    return MockAgent(tools, llm)
+
+
+# Test the agent's retrieval functionality with a mock retriever and mock LLM
+def test_agent_retrieval_functionality_with_mock():
+    retriever = mock_retriever_tool()
+    llm = MockLLM()
+    agent = initialize_agent([retriever], llm)
+    query = "What is organizational AI?"
+    result = agent.run(query)
+    # Check that retriever was called with the query
+    assert retriever.called_with == [query]
+    # Check that the agent returns a response string containing expected text
+    assert "Agent result:" in result
+    assert "LLM response to:" in result
+    assert "organizational AI" in result

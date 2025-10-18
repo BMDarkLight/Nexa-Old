@@ -77,7 +77,7 @@ def process_context_embedding(
                     table_data = extract_table_from_excel(file_content)
                 else:
                     table_data = extract_table_from_csv(file_content)
-                
+
                 if table_data.get("shape", (0, 0))[0] > 300:
                     logger.error("Spreadsheet exceeds 300-row limit.")
                     raise HTTPException(status_code=400, detail="Spreadsheet exceeds limit of 300 rows.")
@@ -85,59 +85,32 @@ def process_context_embedding(
                 if not table_data:
                     logger.error("No extractable table data in spreadsheet.")
                     raise HTTPException(status_code=400, detail="Unrecognizable spreadsheet format.")
-                
+
                 schema = table_data.get("schema", {})
                 sample = table_data.get("sample", [])[:10]
                 shape = table_data.get("shape", ())
                 dataframe = table_data.get("dataframe")
-                row_texts = []
                 if dataframe is not None:
-                    for idx, row in dataframe.iterrows():
-                        row_text = "; ".join([f"{col}: {row[col]}" for col in dataframe.columns])
-                        row_texts.append(row_text)
+                    try:
+                        data_json = dataframe.to_json(orient="split")
+                    except Exception as e:
+                        logger.error(f"Failed to serialize dataframe to JSON: {e}")
+                        data_json = None
                 else:
-                    logger.warning("No dataframe found in table_data; skipping row embedding.")
-                row_docs = []
-                if row_texts:
-                    for row_idx, row_text in enumerate(row_texts):
-                        embedding = embed(row_text)
-                        if embedding:
-                            emb = embedding[0]
-                            doc = {
-                                "text": row_text,
-                                "embedding": emb["embedding"],
-                                "file_key": file_key,
-                                "is_tabular": True,
-                                "org": user_org_id
-                            }
-                            row_docs.append(doc)
-                        else:
-                            logger.warning(f"Failed to embed row {row_idx} in spreadsheet.")
-                    if row_docs:
-                        result = knowledge_db.insert_many(row_docs)
-                        inserted_row_ids = result.inserted_ids
-                        logger.info(f"Generated and saved embeddings for {len(inserted_row_ids)} spreadsheet rows.")
-                    else:
-                        inserted_row_ids = []
-                else:
-                    logger.warning("No row texts to embed for spreadsheet.")
-                    inserted_row_ids = []
+                    logger.warning("No dataframe found in table_data; cannot serialize.")
+                    data_json = None
                 doc = {
                     "file_key": file_key,
                     "is_tabular": True,
                     "org": user_org_id,
-                    "structured_data": {
-                        "schema": schema,
-                        "sample": sample,
-                        "shape": shape
-                    },
-                    "row_ids": inserted_row_ids if inserted_row_ids else []
+                    "schema": schema,
+                    "sample": sample,
+                    "shape": shape,
+                    "data_json": data_json
                 }
                 result = knowledge_db.insert_one(doc)
                 context_id = result.inserted_id
                 logger.info(f"Inserted spreadsheet structured data to DB with context_id={context_id}")
-                if inserted_row_ids:
-                    logger.info(f"Inserted spreadsheet row embeddings with row IDs: {inserted_row_ids}")
                 is_tabular = True
             else:
                 logger.error(f"Unsupported file type: {content_type}")

@@ -1,17 +1,23 @@
 from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from langchain.callbacks.manager import CallbackManager
+from langchain_community.document_loaders.csv_loader import CSVLoader
+from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
+from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
+from langchain_openai import ChatOpenAI as PandasChatOpenAI
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
+import pandas as pd
+import logging
+import traceback
+import tempfile
+import os
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
-
-# --- Robust TokenCountingCallbackHandler ---
-from langchain.callbacks.base import BaseCallbackHandler
+from api.database import agents_db, connectors_db, knowledge_db, minio_client
 
 class TokenCountingCallbackHandler(BaseCallbackHandler):
     def __init__(self):
@@ -23,12 +29,10 @@ class TokenCountingCallbackHandler(BaseCallbackHandler):
         self.total_tokens = 0
 
     def on_llm_end(self, response, **kwargs):
-        # Safely extract token usage from LLM response
         usage = getattr(response, "llm_output", {}).get("token_usage", {})
         self.prompt_tokens += usage.get("prompt_tokens", 0)
         self.completion_tokens += usage.get("completion_tokens", 0)
         self.total_tokens += usage.get("total_tokens", 0)
-from api.database import agents_db, connectors_db, knowledge_db, minio_client
 
 
 class LoggingChatOpenAI(ChatOpenAI):
@@ -39,7 +43,6 @@ class LoggingChatOpenAI(ChatOpenAI):
         return super().generate(messages, *args, **kwargs)
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
-    # Only used in this file, but keep as required by context
     import re, unidecode
     name_ascii = unidecode.unidecode(name)
     sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', name_ascii)
@@ -57,8 +60,11 @@ def retrieve_relevant_context(
 ) -> str:
     """
     Retrieve the most relevant context from a list of context_docs for the given question.
-    Handles both tabular and text document chunks. Returns a string of relevant context.
+    For text documents: uses embedding similarity to select top-n chunks (unchanged).
+    For tabular CSV/Excel documents: reconstructs DataFrame and uses a Pandas agent to generate context.
+    The result merges tabular agent outputs with the text-based top-n chunks.
     """
+
     if not context_docs or not question:
         return "⚠️ No relevant context found for this question."
 
@@ -68,40 +74,18 @@ def retrieve_relevant_context(
     except Exception:
         return "⚠️ No relevant context found for this question."
 
-    tabular_rows_scored = []
+    tabular_context_outputs = []
+    tabular_file_keys = set()
     text_chunks_scored = []
 
     for idx, doc in enumerate(context_docs):
         try:
             doc_is_tabular = doc.get("is_tabular", False)
             file_key = doc.get("file_key", None)
-            if doc_is_tabular:
-                if not file_key:
-                    continue
-
-                tabular_rows = [
-                    row_doc for row_doc in context_docs
-                    if row_doc.get("file_key") == file_key and row_doc.get("embedding")
-                ]
-                if not tabular_rows:
-                    continue
-
-                row_similarities = []
-                for row_doc in tabular_rows:
-                    row_text = row_doc.get("text", "")
-                    row_emb = row_doc["embedding"]
-                    sim = similarity(question_emb, row_emb)
-                    row_similarities.append((sim, row_text))
-
-                row_similarities.sort(reverse=True, key=lambda x: x[0])
-                top_rows_actual = row_similarities[:top_rows]
-                filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
-                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row in top_rows_actual)
-
-                max_score = top_rows_actual[0][0] if top_rows_actual else 0
-                tabular_rows_scored.append((max_score, context_text))
+            if doc_is_tabular and file_key:
+                tabular_file_keys.add(file_key)
                 continue
-            
+
             if "chunks" in doc and isinstance(doc["chunks"], list):
                 for chunk in doc["chunks"]:
                     chunk_text = chunk.get("text", "")
@@ -121,27 +105,70 @@ def retrieve_relevant_context(
                     text_chunks_scored.append((sim, chunk_text))
                 except Exception:
                     pass
-            else:
-                pass
         except Exception:
             pass
 
-    selected_contexts = []
-    num_text_chunks_selected = 0
-    num_tabular_groups_selected = 0
+    for file_key in tabular_file_keys:
+        tabular_docs = [doc for doc in context_docs if doc.get("file_key") == file_key and doc.get("is_tabular", False)]
+        df = None
+        filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
+        data_json = None
+        for doc in tabular_docs:
+            if "data_json" in doc and doc["data_json"]:
+                data_json = doc["data_json"]
+                break
+        if data_json:
+            try:
+                df = pd.read_json(data_json, orient="split")
+            except Exception:
+                df = None
+        if df is None and tabular_docs:
+            rows = []
+            header = None
+            for doc in tabular_docs:
+                if "row" in doc and isinstance(doc["row"], dict):
+                    rows.append(doc["row"])
+                elif "text" in doc and doc["text"]:
+                    try:
+                        if not header and "metadata" in doc and "header" in doc["metadata"]:
+                            header = doc["metadata"]["header"]
+                        if header:
+                            values = [v.strip() for v in doc["text"].split(",")]
+                            row_dict = dict(zip(header, values))
+                            rows.append(row_dict)
+                    except Exception:
+                        pass
+            if rows:
+                try:
+                    df = pd.DataFrame(rows)
+                except Exception:
+                    df = None
+        if df is not None and not df.empty:
+            try:
+                # Use Pandas agent to answer the question about the DataFrame
+                # Use a small, low-cost model for table analysis
+                pandas_llm = PandasChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+                pandas_agent = create_pandas_dataframe_agent(pandas_llm, df, verbose=False)
+                tabular_prompt = (
+                    f"The following table is from '{filename}'. "
+                    f"Given the user's question, answer using only this table's data. "
+                    f"User's question: {question_text}"
+                )
+                agent_response = pandas_agent.invoke(tabular_prompt)
+                # Compose result
+                tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
+            except Exception:
+                logging.error(f"Failed to process tabular data for file_key {file_key}:\n{traceback.format_exc()}")
 
+    selected_contexts = []
     if text_chunks_scored:
         text_chunks_scored.sort(reverse=True, key=lambda x: x[0])
         top_text_chunks = text_chunks_scored[:top_n]
         for sim, text in top_text_chunks:
             selected_contexts.append(text)
-        num_text_chunks_selected = len(top_text_chunks)
 
-    if tabular_rows_scored:
-        tabular_rows_scored.sort(reverse=True, key=lambda x: x[0])
-        for score, tabular_text in tabular_rows_scored[:top_n]:
-            selected_contexts.append(tabular_text)
-        num_tabular_groups_selected = min(top_n, len(tabular_rows_scored))
+    if tabular_context_outputs:
+        selected_contexts.extend(tabular_context_outputs)
 
     if not selected_contexts:
         return "⚠️ No relevant context found for this question."
@@ -264,17 +291,21 @@ async def get_agent_graph(
             filename = "_".join(entry_doc.get("file_key", "").split("_")[1:]) if entry_doc.get("file_key") else ""
 
             if entry_doc.get("is_tabular", False):
-                entry_exp = "The data is structured an tabular, Use the provided rows to answer questions accurately.\n"
+                entry_exp = "The data is structured as a tabular CSV DataFrame. Use the provided data to answer questions accurately.\n"
                 file_key = entry_doc.get("file_key")
-                row_docs = list(knowledge_db.find({
-                    "file_key": file_key,
-                    "is_tabular": True,
-                    "embedding": {"$exists": True},
-                    "text": {"$exists": True}
-                }))
-                context_docs.extend(row_docs)
+                data_json = entry_doc.get("data_json")
+                if data_json and file_key:
+                    try:
+                        df = pd.read_json(data_json, orient="split")
+                        tmp_csv_path = f"/tmp/{file_key}.csv"
+                        df.to_csv(tmp_csv_path, index=False)
+                        loader = CSVLoader(file_path=tmp_csv_path)
+                        csv_docs = loader.load()
+                        context_docs.extend(csv_docs)
+                    except Exception as e:
+                        pass
             else:
-                entry_exp = "The data is text, it is likely a document that you have access to, َUse the provided context from the file to answer question accordingly.\n"
+                entry_exp = "The data is text, it is likely a document that you have access to. Use the provided context from the file to answer question accordingly.\n"
                 if "chunks" in entry_doc:
                     context_docs.extend(entry_doc["chunks"])
                 elif "text" in entry_doc:
@@ -327,7 +358,6 @@ async def get_agent_graph(
 
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
-        # Remove streaming token handler logic, instead count tokens after composing prompt and completion
         agent_llm = LoggingChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
