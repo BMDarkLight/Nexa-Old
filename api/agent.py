@@ -1,4 +1,3 @@
-from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langchain_community.document_loaders.csv_loader import CSVLoader
@@ -205,7 +204,6 @@ def retrieve_relevant_context(
     final_context = "\n\n".join(selected_contexts)
     return final_context
 
-@traceable
 async def get_agent_graph(
     question: str,
     organization_id: ObjectId,
