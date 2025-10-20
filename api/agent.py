@@ -168,8 +168,9 @@ def retrieve_relevant_context(
                     pandas_llm, df, verbose=False, allow_dangerous_code=True
                 )
                 tabular_prompt = (
-                    f"The following table is from '{filename}'. "
-                    f"Given the user's question, answer using only this table's data. "
+                    "You have access to a table of structured data loaded from the organization's knowledge base. "
+                    "Use only the data in this table to answer the user's question. "
+                    "Do not reference any external files or filenames. "
                     f"User's question: {question_text}"
                 )
                 agent_response = pandas_agent.invoke(tabular_prompt)
