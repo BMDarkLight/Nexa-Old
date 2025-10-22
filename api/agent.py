@@ -179,13 +179,34 @@ def retrieve_relevant_context(
                     handle_parsing_errors=True,
                 )
 
-                tabular_prompt = (
-                    "You are analyzing a structured DataFrame loaded from the organization's knowledge base. "
-                    "The DataFrame is:\n"
-                    f"{df.head(10).to_markdown()}\n\n"
-                    f"User's question: {question_text}\n"
-                    "Write and execute Python code to compute or summarize the answer precisely."
+                instruction_text = (
+                    "You are analyzing a structured DataFrame called 'df' that contains the full dataset loaded from the organization's knowledge base. "
+                    "You have full access to the DataFrame in memory and can execute real Python code to explore and analyze it.\n\n"
+                    "When you begin, use Python commands like:\n"
+                    "  - df.head() to view the first few rows\n"
+                    "  - df.info() to inspect columns and data types\n"
+                    "  - df.describe() to summarize numeric columns\n"
+                    "  - df['column_name'].value_counts() or df.groupby('column_name') for grouping and aggregation\n"
+                    "You should always execute Python code using the variable 'df' to compute accurate answers.\n\n"
                 )
+
+                question_text_token_estimate = len(question_text.split())
+                df_token_estimate = len(df.to_csv(index=False).split())
+                instruction_token_estimate = len(instruction_text.split())
+
+                if instruction_token_estimate + question_text_token_estimate + df_token_estimate < 8000:
+                    tabular_prompt = (
+                        instruction_text +
+                        f"The entire CSV is provided below:\n{df.to_csv(index=False)}\n\n"
+                        f"User's question: {question_text}\n"
+                        "Write and run Python code to explore, summarize, and answer based on the full DataFrame."
+                    )
+                else:
+                    tabular_prompt = (
+                        instruction_text +
+                        f"User's question: {question_text}\n"
+                        "Do NOT rely on example rows for computation; run Python code to explore and summarize the full DataFrame variable 'df'."
+                    )
 
                 agent_response = analysis_agent.run(tabular_prompt)
                 logger.info("PythonAstREPLTool agent completed for file: %s", filename)
