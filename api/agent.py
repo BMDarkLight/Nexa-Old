@@ -1,10 +1,10 @@
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
-from langchain_openai import ChatOpenAI as PandasChatOpenAI
+from langchain_experimental.tools import PythonAstREPLTool
+from langchain.agents import initialize_agent, AgentType
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
@@ -16,7 +16,7 @@ import os
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
-from api.database import agents_db, connectors_db, knowledge_db, minio_client
+from api.database import agents_db, connectors_db, knowledge_db
 
 class TokenCountingCallbackHandler(BaseCallbackHandler):
     def __init__(self):
@@ -162,22 +162,36 @@ def retrieve_relevant_context(
                     df = None
         if df is not None and not df.empty:
             try:
-                logger.info("Invoking Pandas agent on tabular file: %s", filename)
-                pandas_llm = PandasChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-                pandas_agent = create_pandas_dataframe_agent(
-                    pandas_llm, df, verbose=False, allow_dangerous_code=True
+                logger.info("Invoking PythonAstREPLTool agent on tabular file: %s", filename)
+                csv_tool = PythonAstREPLTool()
+                csv_tool.name = "csv_analyzer"
+                csv_tool.description = (
+                    "Executes Python code to analyze structured tabular data. "
+                    "Use it to compute, summarize, or visualize data accurately from the given DataFrame."
                 )
+
+                llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+                analysis_agent = initialize_agent(
+                    tools=[csv_tool],
+                    llm=llm,
+                    agent=AgentType.OPENAI_FUNCTIONS,
+                    verbose=False,
+                    handle_parsing_errors=True,
+                )
+
                 tabular_prompt = (
-                    "You have access to a table of structured data loaded from the organization's knowledge base. "
-                    "Use only the data in this table to answer the user's question. "
-                    "Do not reference any external files or filenames. "
-                    f"User's question: {question_text}"
+                    "You are analyzing a structured DataFrame loaded from the organization's knowledge base. "
+                    "The DataFrame is:\n"
+                    f"{df.head(10).to_markdown()}\n\n"
+                    f"User's question: {question_text}\n"
+                    "Write and execute Python code to compute or summarize the answer precisely."
                 )
-                agent_response = pandas_agent.invoke(tabular_prompt)
-                logger.info("Pandas agent completed for file: %s", filename)
+
+                agent_response = analysis_agent.run(tabular_prompt)
+                logger.info("PythonAstREPLTool agent completed for file: %s", filename)
                 tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
             except Exception as exc:
-                logger.error(f"Failed to process tabular data for file_key {file_key}:\n{traceback.format_exc()}")
+                logger.error(f"Failed to process tabular data with PythonAstREPLTool for file_key {file_key}:\n{traceback.format_exc()}")
         else:
             logger.warning("No valid DataFrame found for tabular file: %s", filename)
 
