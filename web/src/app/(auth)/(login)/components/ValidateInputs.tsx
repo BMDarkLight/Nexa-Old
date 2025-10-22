@@ -25,7 +25,7 @@ interface ILoginResponse {
 }
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.5";
 const End_point: string = "/signin";
 const API_PORT: string = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 const UI_PORT: string = process.env.NEXT_PUBLIC_UI_PORT ?? "8000";
