@@ -16,6 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Spinner } from "@/components/ui/spinner";
 import DeleteAgent from "./DeleteAgent";
 import Link from "next/link";
 import Cookie from "js-cookie";
@@ -146,6 +147,27 @@ export default function AgentCard() {
 
     checkTokenAndFetchAgents();
   }, [router]);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-5 lg:px-10">
+        <div className="flex justify-between mt-4 md:mt-0 items-center">
+          <h2 className="text-xl font-medium">لیست ایجنت ‌ها</h2>
+          <Link href="agent/new-agent">
+            <Button className="cursor-pointer text-xs md:text-sm">
+              ایجنت جدید <Plus />
+            </Button>
+          </Link>
+        </div>
+        <div className="flex items-center justify-center h-64">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner className="w-8 h-8" />
+            <p className="text-gray-600">در حال بارگذاری ایجنت‌ها...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

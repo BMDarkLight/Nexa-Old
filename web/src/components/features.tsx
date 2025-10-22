@@ -63,7 +63,7 @@ const features = [
 const Features = () => {
   return (
     <div id="features" className="w-full py-12 xs:py-20 px-6">
-      <h2 className="text-3xl xs:text-4xl sm:text-5xl font-bold tracking-tight text-center">
+      <h2 className="text-3xl lg:text-[36px] font-bold tracking-tight text-center">
         ویژگی‌های نکسا
       </h2>
       <div className="w-full max-w-screen-lg mx-auto mt-10 sm:mt-16 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -75,8 +75,8 @@ const Features = () => {
             <div className="mb-3 h-10 w-10 flex items-center justify-center bg-accent rounded-md p-1">
               <feature.icon className={`h-6 w-6 ${feature.iconColor}`} />
             </div>
-            <span className="text-lg font-semibold">{feature.title}</span>
-            <p className="mt-1 text-foreground/80 text-[15px]">
+            <span className="text-[16px] font-semibold">{feature.title}</span>
+            <p className="mt-1 text-foreground/80 text-[14px]">
               {feature.description}
             </p>
           </div>

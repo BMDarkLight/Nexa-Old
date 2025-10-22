@@ -11,6 +11,7 @@ import * as Yup from "yup";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Eye, EyeOff } from "lucide-react";
 
 interface IUserData {
   username: string;
@@ -43,6 +44,7 @@ const schema = Yup.object({
 
 export default function ValidateInputs() {
   const router = useRouter();
+  const [showPassword, setShowPassword] = useState(false);
 
   const {
     register,
@@ -154,7 +156,7 @@ export default function ValidateInputs() {
             حساب کاربری ندارید؟
             <Link
               href="/signup"
-              className="underline underline-offset-4 hover:text-primary transition-all duration-500 mr-1"
+              className="underline underline-offset-4 text-primary transition-all duration-500 mr-1"
             >
               ثبت نام کنید
             </Link>
@@ -177,7 +179,7 @@ export default function ValidateInputs() {
               </Label>
               <Link
                 href="/forget-password"
-                className="text-sm hover:underline transition duration-500"
+                className="text-sm text-primary hover:underline transition duration-500"
               >
                 رمز عبورتان را فراموش کردید؟
               </Link>
@@ -185,10 +187,21 @@ export default function ValidateInputs() {
             <div className="relative">
               <Input
                 id="password"
-                type="password"
+                type={showPassword ? "text" : "password"}
                 {...register("password")}
-                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] pr-10"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
             </div>
             {errors.password && (
               <p className="text-red-500 text-xs">{errors.password.message}</p>

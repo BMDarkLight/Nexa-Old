@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ArrowUp } from "lucide-react";
 import {
   Select,
@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { useRouter } from "next/navigation";
 import Cookie from "js-cookie";
 
@@ -31,6 +32,7 @@ export default function StartChat() {
   const [selectedAgent, setSelectedAgent] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [authHeader, setAuthHeader] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(true);
 
   const router = useRouter();
 
@@ -59,6 +61,7 @@ export default function StartChat() {
       console.log("[FETCH AGENTS] URL:", fullUrl);
 
       try {
+        setIsLoading(true);
         const res = await fetch(fullUrl, {
           headers: {
             Authorization: authHeader,
@@ -85,6 +88,8 @@ export default function StartChat() {
         setAgents(data);
       } catch (error) {
         console.error("[FETCH AGENTS] Error:", error);
+      } finally {
+        setIsLoading(false);
       }
     };
     fetchAgents();
@@ -163,12 +168,23 @@ export default function StartChat() {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && query && !isSending) {
       e.preventDefault();
       handleSend();
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="h-[90vh] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Spinner className="w-8 h-8" />
+          <p className="text-gray-600">در حال بارگذاری ایجنت‌ها...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-[90vh] flex items-center justify-center w-[100%] md:w-[85%] mx-auto">
@@ -179,10 +195,18 @@ export default function StartChat() {
           </h2>
         </div>
 
-        <div className="chat-input relative">
-          <div className="absolute right-3 top-3">
+        <div className="chat-input border border-input rounded-xl bg-transparent p-2 shadow-xs">
+          <Textarea
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="داده‌ها را متصل کنید و گفت‌وگو را شروع کنید!"
+            onKeyPress={handleKeyPress}
+            className="text-base border-0 shadow-none bg-transparent p-0 focus:ring-0"
+          />
+
+          <div className="flex items-center justify-between mt-2">
             <Select value={selectedAgent} onValueChange={setSelectedAgent}>
-              <SelectTrigger className="text-xs rounded-full px-4 py-2" size="sm">
+              <SelectTrigger className="text-base rounded-full px-4 py-2 w-auto" size="sm">
                 <SelectValue placeholder="انتخاب ایجنت" />
               </SelectTrigger>
               <SelectContent>
@@ -193,28 +217,20 @@ export default function StartChat() {
                 ))}
               </SelectContent>
             </Select>
+
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!query || isSending}
+              className={`flex items-center justify-center w-8 h-8 rounded-full transition duration-300 ${
+                !query || isSending
+                  ? "bg-gray-400 text-white cursor-not-allowed"
+                  : "bg-blue-600 text-white hover:opacity-90"
+              }`}
+            >
+              <ArrowUp size={18} />
+            </button>
           </div>
-
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="داده‌ها را متصل کنید و گفت‌وگو را شروع کنید!"
-            onKeyPress={handleKeyPress}
-            className="pt-16 pb-7 text-xs md:text-base rounded-xl "
-          />
-
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!query || isSending}
-            className={`absolute inset-y-13 md:inset-y-13 left-2 md:left-3 flex items-center justify-center w-7 h-7 md:w-8 md:h-8 rounded-full transition duration-300 ${
-              !query || isSending
-                ? "bg-gray-400 text-white cursor-not-allowed"
-                : "bg-blue-600 text-white hover:opacity-90"
-            }`}
-          >
-            <ArrowUp size={18} />
-          </button>
         </div>
       </div>
     </div>

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { useAgent } from "@/app/dashboard/context/AgentsContext";
 import { useRouter } from "next/navigation";
 import Cookie from "js-cookie";
@@ -73,14 +74,7 @@ export default function NameAgentCom() {
       const newAgent = await res.json();
       const agentId = newAgent._id;
 
-      toast.success("ایجنت با موفقیت ساخته شد.", {
-        icon: null,
-        style: {
-          background: "#2A9D90",
-          color: "#fff",
-        },
-        duration: 2000,
-      });
+
 
       router.push(`new-agent/uploadFile-agent/${agentId}`);
     } catch {
@@ -124,7 +118,14 @@ export default function NameAgentCom() {
           onClick={handleSave}
           disabled={saving}
         >
-          {saving ? "مرحله بعد..." : "مرحله بعد"}
+          {saving ? (
+            <>
+              <Spinner className="w-4 h-4 mr-2" />
+              در حال ایجاد...
+            </>
+          ) : (
+            "مرحله بعد"
+          )}
         </Button>
       </div>
     </div>

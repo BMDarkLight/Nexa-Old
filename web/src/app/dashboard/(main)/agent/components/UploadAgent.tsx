@@ -7,6 +7,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Upload } from "lucide-react";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Spinner } from "@/components/ui/spinner";
 import DeleteFile from "./DeleteFile";
 import ReturnBtn from "./ReturnBtn";
 import { useParams, useRouter } from "next/navigation";
@@ -29,6 +30,7 @@ export default function UploadAgent() {
   const [contextEntries, setContextEntries] = useState<ContextEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [nextLoading, setNextLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const { agent_id } = useParams();
   const router = useRouter();
@@ -65,7 +67,13 @@ export default function UploadAgent() {
   }, [agent_id, token, tokenType]);
 
   useEffect(() => {
-    fetchContext();
+    const fetchData = async () => {
+      setInitialLoading(true);
+      await fetchContext();
+      setInitialLoading(false);
+    };
+    
+    fetchData();
     const handleRefresh = () => fetchContext();
     window.addEventListener("refreshFiles", handleRefresh);
     return () => window.removeEventListener("refreshFiles", handleRefresh);
@@ -153,6 +161,19 @@ export default function UploadAgent() {
     }, 1000);
   };
 
+  if (initialLoading) {
+    return (
+      <div className="flex lg:px-10 md:items-center md:justify-center mx-auto">
+        <div className="w-full flex items-center justify-center h-64">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner className="w-8 h-8" />
+            <p className="text-gray-600">در حال بارگذاری فایل‌ها...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex lg:px-10 md:items-center md:justify-center mx-auto">
       <div className="w-full flex flex-col gap-4">
@@ -173,7 +194,7 @@ export default function UploadAgent() {
               asChild
             >
               <span>
-                <Upload size={18} />
+                {loading ? <Spinner className="w-4 h-4" /> : <Upload size={18} />}
                 {loading ? "در حال آپلود..." : "برای انتخاب فایل CSV کلیک کنید"}
               </span>
             </Button>
@@ -226,7 +247,14 @@ export default function UploadAgent() {
             onClick={handleNext}
             disabled={nextLoading}
           >
-            {nextLoading ? "مرحله بعد..." : "مرحله بعد"}
+            {nextLoading ? (
+              <>
+                <Spinner className="w-4 h-4 mr-2" />
+                مرحله بعد...
+              </>
+            ) : (
+              "مرحله بعد"
+            )}
           </Button>
         </div>
       </div>

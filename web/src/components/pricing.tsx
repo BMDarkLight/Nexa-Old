@@ -29,8 +29,8 @@ const plans = [
     monthly: "/ماهانه",
     description: "مناسب برای کسب‌وکارهای کوچک و شروع‌کننده",
     features: [
-      { title: "تا 250 پیام" },
-      { title: "7 روز ذخیره سازی فایل ها" },
+      { title: "تا 250 پیام", messageCount: 250 },
+      { title: "7 روز ذخیره سازی فایل ها", storageDays: 7 },
     ],
     buttonText: "ثبت نام",
     isPopular: true,
@@ -43,8 +43,8 @@ const plans = [
     isRecommended: true,
     description: "مناسب برای کسب‌وکارهای در حال رشد و متوسط",
     features: [
-      { title: "تا 1000 پیام" },
-      { title: "10 روز ذخیره سازی فایل ها" },
+      { title: "تا 1000 پیام", messageCount: 1000 },
+      { title: "10 روز ذخیره سازی فایل ها", storageDays: 10 },
     ],
     buttonText: "ثبت نام",
   },
@@ -73,15 +73,32 @@ const Pricing = () => {
   const getDisplayPrice = (price: number | string): string => {
     if (typeof price !== "number") return price;
     if (selectedBillingPeriod === "yearly") {
-      const discount = price * ((100 - YEARLY_DISCOUNT) / 100);
+      const discount = price * ((100 - YEARLY_DISCOUNT) / 100) * 12;
       return formatPrice(discount);
     }
     return formatPrice(price);
   };
 
+  const getFeatureTitle = (feature: any): string => {
+    if (feature.messageCount && selectedBillingPeriod === "yearly") {
+      const yearlyCount = feature.messageCount * 12;
+      return `تا ${yearlyCount.toLocaleString("fa-IR")} پیام`;
+    } else if (feature.storageDays && selectedBillingPeriod === "yearly") {
+      const yearlyDays = feature.storageDays * 12;
+      return `${yearlyDays.toLocaleString("fa-IR")} روز ذخیره سازی فایل ها`;
+    }
+    return feature.title;
+  };
+
   const handleButtonClick = (plan: { buttonText: string }) => {
     if (plan.buttonText === "ثبت نام") {
       router.push("/signup");
+    }
+    if (plan.buttonText === "تماس با فروش") {
+        if (typeof window !== "undefined") {
+          window.location.href = "tel:+989105860050";
+        }
+
     }
   };
 
@@ -90,7 +107,7 @@ const Pricing = () => {
       id="pricing"
       className="flex flex-col items-center justify-center py-12 xs:py-20 px-6"
     >
-      <h1 className="text-3xl xs:text-4xl md:text-5xl font-bold text-center tracking-tight">
+      <h1 className="text-3xl lg:text-[36px] font-bold text-center tracking-tight">
         قیمت‌گذاری
       </h1>
       <Tabs
@@ -121,7 +138,7 @@ const Pricing = () => {
               </Badge>
             )}
             <h3 className="text-base font-bold">{plan.name}</h3>
-            <p className="mt-2 text-lg font-bold text-primary">
+            <p className="mt-2 text-[20px] font-bold text-primary">
               {getDisplayPrice(plan.price)}
               {plan.priceName}
               <span className="ml-1.5 text-sm text-muted-foreground font-normal">
@@ -142,13 +159,13 @@ const Pricing = () => {
             </Button>
 
             <ul className="space-y-2 mt-7">
-              {plan.features.map((feature) => (
+              {plan.features.map((feature, index) => (
                 <li
-                  key={feature.title}
+                  key={`${feature.title}-${index}`}
                   className="flex items-center justify-start gap-1.5 text-sm text-muted-foreground"
                 >
                   <CircleCheck className="h-4 w-4 text-green-600" />
-                  {feature.title}
+                  {getFeatureTitle(feature)}
                 </li>
               ))}
             </ul>

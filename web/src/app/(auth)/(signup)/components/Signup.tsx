@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import * as Yup from "yup";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Link from "next/link";
+import { Eye, EyeOff } from "lucide-react";
 
 const API_Base_Url: string =
   process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
@@ -64,6 +65,8 @@ const validationSchema = Yup.object().shape({
 
 export default function SignUpInputs() {
   const router = useRouter();
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const {
     register,
@@ -102,7 +105,7 @@ export default function SignUpInputs() {
       });
 
       if (!response.ok) {
-        toast.error("لطفا به درستی فرم ثبت نام رو پر کنید.", {
+        toast.error("نام کاربری یا سازمان قبلا ثبت شده است.", {
           icon: null,
           style: {
             background: "#DC2626",
@@ -153,11 +156,11 @@ export default function SignUpInputs() {
             </div>
           </a>
           <h1 className="text-xl font-bold">ثبت نام در نکسا</h1>
-          <div className="text-center text-sm">
+          <div className="text-center text-sm ">
             از قبل حساب دارید؟
             <Link
               href="/login"
-              className="underline underline-offset-4 hover:text-primary transition-all duration-500 mr-1"
+              className="underline underline-offset-4 text-primary transition-all duration-500 mr-1"
             >
               وارد شوید
             </Link>
@@ -249,12 +252,25 @@ export default function SignUpInputs() {
             <Label htmlFor="password">
               رمز عبور<span className="text-[#EF4444]">*</span>
             </Label>
-            <Input
-              id="password"
-              type="password"
-              {...register("password")}
-              className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                {...register("password")}
+                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
             {errors.password && (
               <p className="text-red-500 text-xs">{errors.password.message}</p>
             )}
@@ -269,16 +285,27 @@ export default function SignUpInputs() {
             <div className="relative">
               <Input
                 id="cpassword"
-                type="password"
+                type={showConfirmPassword ? "text" : "password"}
                 {...register("cpassword")}
-                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                className="focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] pr-10"
               />
-              {errors.cpassword && (
-                <p className="text-red-500 text-xs">
-                  {errors.cpassword.message}
-                </p>
-              )}
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+              >
+                {showConfirmPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
             </div>
+            {errors.cpassword && (
+              <p className="text-red-500 text-xs">
+                {errors.cpassword.message}
+              </p>
+            )}
           </div>
 
           <Button

@@ -13,6 +13,7 @@ import Cookie from "js-cookie";
 import { Badge } from "@/components/ui/badge";
 import { useRouter } from "next/navigation";
 import { Switch } from "@/components/ui/switch";
+import { Spinner } from "@/components/ui/spinner";
 import ReturnBtn from "./ReturnBtn";
 import { useAgent } from "@/app/dashboard/context/AgentsContext";
 import { toast } from "sonner";
@@ -30,7 +31,7 @@ const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function NewAgent() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
   const { agent, toggleConnector } = useAgent();
 
@@ -46,6 +47,7 @@ export default function NewAgent() {
       }
 
       try {
+        setLoading(true);
         const res = await fetch(`${API_Base_Url}:${API_PORT}/connectors`, {
           method: "GET",
           headers: {
@@ -88,6 +90,8 @@ export default function NewAgent() {
           },
           duration: 2000,
         });
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -126,6 +130,22 @@ export default function NewAgent() {
       router.push("/dashboard/agent");
     }, 1000);
   };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-5 lg:px-5">
+        <div className="flex justify-between mt-4 md:mt-0 items-center">
+          <h2 className="text-xl font-medium">لیست اتصالات</h2>
+        </div>
+        <div className="flex items-center justify-center h-64">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner className="w-8 h-8" />
+            <p className="text-gray-600">در حال بارگذاری اتصالات...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5 lg:px-5">
@@ -186,7 +206,14 @@ export default function NewAgent() {
           onClick={handleSave}
           disabled={loading}
         >
-          {loading ? "در حال ذخیره..." : "ذخیره"}
+          {loading ? (
+            <>
+              <Spinner className="w-4 h-4 mr-2" />
+              در حال ذخیره...
+            </>
+          ) : (
+            "ذخیره"
+          )}
         </Button>
       </div>
     </div>

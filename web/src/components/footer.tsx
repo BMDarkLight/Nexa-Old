@@ -83,7 +83,7 @@ const Footer = () => {
               <img src="/Squad/image/gmail.png" className="w-7 h-7" alt="" />
             </Link>
             <Link href="#" target="_blank">
-              <img src="/Squad/image/linkdin.png" className="w-7 h-7" alt="" />
+              <img src="/Squad/image/Linkdin.png" className="w-7 h-7" alt="" />
             </Link>
             <Link href="#" target="_blank">
               <img src="/Squad/image/instagram.png" className="w-7 h-7" alt="" />

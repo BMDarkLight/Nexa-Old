@@ -3,6 +3,7 @@
 import {
   ChevronLeft,
   Edit,
+  MoreVertical,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
@@ -13,6 +14,12 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   SidebarGroup,
   SidebarMenu,
@@ -85,18 +92,27 @@ export function NavMain({
                               </a>
                             </div>
                             <div className="flex items-center gap-2">
-                              <a
-                                href="#"
-                                className="hover:text-red-400"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  if (onDelete && subItem.id) {
-                                    onDelete(subItem.id);
-                                  }
-                                }}
-                              >
-                                <Trash2 size={18} />
-                              </a>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button className="text-black cursor-pointer p-1 rounded-md hover:bg-sidebar-accent transition-colors">
+                                    <MoreVertical size={16} />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      if (onDelete && subItem.id) {
+                                        onDelete(subItem.id);
+                                      }
+                                    }}
+                                    className="text-black hover:text-red-500 cursor-pointer"
+                                  >
+                                    <Trash2 size={16} className="mr-2 group-hover:text-red-500 " />
+                                    حذف گفتگو
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </div>
                         </SidebarMenuSubButton>

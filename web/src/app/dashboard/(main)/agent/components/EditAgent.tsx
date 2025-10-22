@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import Cookie from "js-cookie";
 
 const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
@@ -101,7 +102,14 @@ export default function EditAgent() {
   };
 
   if (loading) {
-    return <p>در حال بارگذاری اطلاعات ایجنت...</p>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-4">
+          <Spinner className="w-8 h-8" />
+          <p className="text-gray-600">در حال بارگذاری اطلاعات ایجنت...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -123,7 +131,14 @@ export default function EditAgent() {
 
       <div className="flex justify-end items-center gap-3">
         <Button onClick={handleSave} disabled={saving}>
-          {saving ? "مرحله بعد..." : "مرحله بعد"}
+          {saving ? (
+            <>
+              <Spinner className="w-4 h-4 mr-2" />
+              در حال ذخیره...
+            </>
+          ) : (
+            "مرحله بعد"
+          )}
         </Button>
       </div>
     </div>

@@ -65,10 +65,10 @@ const FAQ = () => {
       className="min-h-screen flex items-center justify-center px-6 py-12 xs:py-20"
     >
       <div className="max-w-screen-lg">
-        <h2 className="text-3xl xs:text-4xl md:text-5xl !leading-[1.15] font-bold tracking-tight text-center">
+        <h2 className="text-3xl md:text-[36px] !leading-[1.15] font-bold tracking-tight text-center">
           سوالات پرتکرار
         </h2>
-        <p className="mt-3 xs:text-lg text-center text-muted-foreground">
+        <p className="mt-3 md:text-lg text-center text-muted-foreground">
          به پرتکرار ترین سوالات شما پاسخ داده ایم.
         </p>
 

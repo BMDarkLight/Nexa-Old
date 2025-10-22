@@ -12,10 +12,10 @@ const Hero = () => {
           <Badge className="bg-[#E3EEFF] rounded-full py-1 px-3 border-none text-[#1668E3]">
             نسخه 1.0.0 هم‌اکنون در دسترس است
           </Badge>
-          <h1 className="mt-6 max-w-[50ch] text-3xl xs:text-4xl sm:text-5xl md:text-5xl font-bold !leading-[1.2] tracking-tight">
+          <h1 className="mt-6 lg:max-w-[50ch] text-3xl xs:text-4xl sm:text-5xl md:text-[56px] font-bold !leading-[1.2] tracking-tight">
             سازمان خود را با هوش مصنوعی دوباره تعریف کنید
           </h1>
-          <p className="mt-6 max-w-[80ch] xs:text-lg text-base">
+          <p className="mt-6 max-w-[80ch] xs:text-lg lg:text-lg">
             هوش مصنوعی نکسا به منابع و نرم‌افزارهای سازمانی شما متصل می‌شود و دانش سازمان را در دسترس همه اعضای تیم قرار می‌دهد، تا بهره‌وری و سرعت تصمیم‌گیری افزایش یابد.
           </p>
           <div className="mt-12 flex flex-col sm:flex-row items-center sm:justify-center gap-4">

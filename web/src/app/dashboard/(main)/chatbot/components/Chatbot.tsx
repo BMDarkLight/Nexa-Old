@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ArrowUp, Edit, Copy, Check, User } from "lucide-react";
 import {
   Select,
@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import Cookie from "js-cookie";
 import { useParams, useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
@@ -59,6 +60,7 @@ export default function Chatbot() {
   const [isEditingSending, setIsEditingSending] = useState<boolean>(false);
 
   const [authHeader, setAuthHeader] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -116,6 +118,7 @@ export default function Chatbot() {
     if (!authHeader) return;
     const fetchAgents = async () => {
       try {
+        setIsLoading(true);
         const res = await fetch(
           `${API_Base_Url}:${API_PORT}${End_point_agents}`,
           {
@@ -141,6 +144,8 @@ export default function Chatbot() {
         setAgents(data);
       } catch {
         alert("خطا در دریافت لیست ایجنت‌ها");
+      } finally {
+        setIsLoading(false);
       }
     };
     fetchAgents();
@@ -339,7 +344,7 @@ const handleSaveEdit = async (index: number) => {
 };
 
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && query && !isSending) {
       e.preventDefault();
       handleSend();
@@ -378,9 +383,20 @@ const handleSaveEdit = async (index: number) => {
     );
   };
 
+  if (isLoading) {
+    return (
+      <div className="h-[94vh] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Spinner className="w-8 h-8" />
+          <p className="text-gray-600">در حال بارگذاری چت...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="h-[94vh] flex flex-col justify-end md:w-[85%] w-[100%] mx-auto">
-      <div className="flex-1 overflow-y-auto mb-4 py-6 px-1 w-full ">
+    <div className="h-[calc(100vh-4rem)] md:h-[100vh] flex flex-col md:w-[85%] w-[100%] mx-auto">
+      <div className="flex-1 overflow-y-auto py-6 px-1 w-full">
         {chatHistory.map((chat, idx) => (
           <div key={idx} className="mb-2 flex flex-col gap-1">
             <div className="flex items-center gap-2 group">
@@ -391,7 +407,7 @@ const handleSaveEdit = async (index: number) => {
                   </span>
                   {editingIndex === idx ? (
                     <div className="flex gap-2 flex-1">
-                      <Input
+                      <Textarea
                         value={editValue}
                         onChange={(e) => setEditValue(e.target.value)}
                         className="flex-1"
@@ -469,44 +485,47 @@ const handleSaveEdit = async (index: number) => {
         <div ref={chatEndRef} />
       </div>
 
-      <div className="flex items-end gap-2 relative">
-        <div className="absolute right-3 top-3">
-          <Select
-            value={selectedAgent}
-            onValueChange={(val) => setSelectedAgent(val)}
-          >
-            <SelectTrigger className="text-xs rounded-full px-4 py-2" size="sm">
-              <SelectValue placeholder="انتخاب ایجنت" />
-            </SelectTrigger>
-            <SelectContent>
-              {agents.map((agent) => (
-                <SelectItem key={agent._id} value={agent._id}>
-                  {agent.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="sticky bottom-0 bg-background p-2 border-t md:border-t-0">
+        <div className="border border-input rounded-xl bg-transparent p-2 shadow-xs w-full">
+          <Textarea
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="گفتگو کنید"
+            onKeyPress={handleKeyPress}
+            className="text-base border-0 shadow-none bg-transparent p-0 focus:ring-0"
+          />
+          
+          <div className="flex items-center justify-between mt-2">
+            <Select
+              value={selectedAgent}
+              onValueChange={(val) => setSelectedAgent(val)}
+            >
+              <SelectTrigger className="text-base rounded-full px-4 py-2 w-auto" size="sm">
+                <SelectValue placeholder="انتخاب ایجنت" />
+              </SelectTrigger>
+              <SelectContent>
+                {agents.map((agent) => (
+                  <SelectItem key={agent._id} value={agent._id}>
+                    {agent.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="گفتگو کنید"
-          onKeyPress={handleKeyPress}
-          className="pt-16 pb-7 text-xs md:text-base rounded-xl "
-        />
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={!query || isSending}
-          className={`absolute inset-y-13 md:inset-y-13 left-2 md:left-3 flex items-center justify-center w-7 h-7 md:w-8 md:h-8 rounded-full transition duration-300 ${
-            !query || isSending
-              ? "bg-gray-400 text-white cursor-not-allowed"
-              : "bg-blue-600 text-white hover:opacity-90"
-          }`}
-        >
-          <ArrowUp size={18} />
-        </button>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!query || isSending}
+              className={`flex items-center justify-center w-8 h-8 rounded-full transition duration-300 ${
+                !query || isSending
+                  ? "bg-gray-400 text-white cursor-not-allowed"
+                  : "bg-blue-600 text-white hover:opacity-90"
+              }`}
+            >
+              <ArrowUp size={18} />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
