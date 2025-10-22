@@ -224,11 +224,13 @@ async def ask(
                     prompts.append(HumanMessage(content=user_msg))
                 if assistant_msg:
                     prompts.append(AIMessage(content=assistant_msg))
-                    
-            title = await run_in_threadpool(title_generator.invoke, prompts)
+            title_msg = await run_in_threadpool(title_generator.invoke, prompts)
+            title_text = getattr(title_msg, "content", str(title_msg))
+            if not isinstance(title_text, str):
+                title_text = str(title_text)
             sessions_db.update_one(
                 {"session_id": session_id},
-                {"$set": {"title": title}}
+                {"$set": {"title": title_text}}
             )
         except Exception as e:
             logger.exception(f"Failed to generate session title for session {session_id}: {str(e)}")
