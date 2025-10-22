@@ -38,10 +38,9 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/web/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/web/.next/static ./.next/static
-COPY --from=builder /app/web/scripts ./scripts
 
 USER nextjs
 
 EXPOSE ${UI_PORT}
 
-CMD ["sh", "-c", "node scripts/load-env.js && PORT=$UI_PORT node server.js"]
+CMD ["sh", "-c", "PORT=$UI_PORT node server.js"]
