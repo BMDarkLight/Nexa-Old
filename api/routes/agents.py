@@ -1,6 +1,8 @@
 from fastapi import BackgroundTasks, Depends, APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+from langchain_openai import ChatOpenAI
 
 from bson import ObjectId
 from typing import List
@@ -200,7 +202,36 @@ async def ask(
     session = sessions_db.find_one({"session_id": session_id})
     if session and session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
+
+
     chat_history = session.get("chat_history", []) if session else []
+
+    if session and len(chat_history) > 3 and "title" not in session:
+        try:
+            title_generator = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)
+            recent_history = session["chat_history"][-10:]
+            prompts = [
+                SystemMessage(
+                    "You are a title generator. You receive the user's chat history in the chatbot and generate a short title based on it. "
+                    "The title should represent what is going on in the chat, the title shouldn't be flashy or trendy, just helpful and straight to the point. "
+                    "Generate the title in the same language as the chat history."
+                ),
+            ]
+            for entry in recent_history:
+                user_msg = entry.get("user")
+                assistant_msg = entry.get("assistant") or entry.get("ai")
+                if user_msg:
+                    prompts.append(HumanMessage(content=user_msg))
+                if assistant_msg:
+                    prompts.append(AIMessage(content=assistant_msg))
+                    
+            title = await run_in_threadpool(title_generator.invoke, prompts)
+            sessions_db.update_one(
+                {"session_id": session_id},
+                {"$set": {"title": title}}
+            )
+        except Exception as e:
+            logger.exception(f"Failed to generate session title for session {session_id}: {str(e)}")
 
     try:
         agent_graph = await get_agent_graph(
