@@ -1,16 +1,19 @@
 from fastapi import BackgroundTasks, Depends, APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
+from langchain_openai import ChatOpenAI
 
 from bson import ObjectId
 from typing import List
 import datetime
 import logging
 import tiktoken
+import uuid
 
 from api.schemas.agents import QueryRequest, save_chat_history, update_chat_history_entry
 from api.agent import get_agent_graph
-from api.database import sessions_db, agents_db, connectors_db, knowledge_db, orgs_db, minio_client
+from api.database import sessions_db, agents_db, connectors_db, knowledge_db, orgs_db, users_db, minio_client
 from api.schemas.agents import Agent, AgentCreate, AgentUpdate, agent_doc_to_model
 from api.embed import delete_embeddings
 from api.auth import verify_token, oauth2_scheme
@@ -180,23 +183,57 @@ async def ask(
     agent_id_to_use = None
     agent_doc = None
     if query.agent_id:
-        if not ObjectId.is_valid(query.agent_id):
+        if not ObjectId.is_valid(query.agent_id) and query.agent_id != "auto" and query.agent_id != "generalist":
             raise HTTPException(status_code=400, detail="Invalid agent ID format.")
-        agent_oid = ObjectId(query.agent_id)
-        agent_query = {"_id": agent_oid}
-        if user.get("permission") != "sysadmin":
-            agent_query["org"] = ObjectId(user["organization"])
-        agent_doc = agents_db.find_one(agent_query)
-        if not agent_doc:
-            raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
-        agent_id_to_use = str(agent_oid)
+        
+        if query.agent_id == "auto" or query.agent_id == "generalist":
+            agent_id_to_use = query.agent_id
+        else:
+            agent_oid = ObjectId(query.agent_id)
+            agent_query = {"_id": agent_oid}
+            if user.get("permission") != "sysadmin":
+                agent_query["org"] = ObjectId(user["organization"])
+            agent_doc = agents_db.find_one(agent_query)
+            if not agent_doc:
+                raise HTTPException(status_code=404, detail="Agent not found or not accessible.")
+            agent_id_to_use = str(agent_oid)
 
-    import uuid
     session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})
     if session and session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
+
+
     chat_history = session.get("chat_history", []) if session else []
+
+    if session and len(chat_history) > 3 and "title" not in session:
+        try:
+            title_generator = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)
+            recent_history = session["chat_history"][-10:]
+            prompts = [
+                SystemMessage(
+                    "You are a title generator. You receive the user's chat history in the chatbot and generate a short title based on it. "
+                    "The title should represent what is going on in the chat, the title shouldn't be flashy or trendy, just helpful and straight to the point. "
+                    "Generate the title in the same language as the chat history."
+                ),
+            ]
+            for entry in recent_history:
+                user_msg = entry.get("user")
+                assistant_msg = entry.get("assistant") or entry.get("ai")
+                if user_msg:
+                    prompts.append(HumanMessage(content=user_msg))
+                if assistant_msg:
+                    prompts.append(AIMessage(content=assistant_msg))
+            title_msg = await run_in_threadpool(title_generator.invoke, prompts)
+            title_text = getattr(title_msg, "content", str(title_msg))
+            if not isinstance(title_text, str):
+                title_text = str(title_text)
+            sessions_db.update_one(
+                {"session_id": session_id},
+                {"$set": {"title": title_text}}
+            )
+        except Exception as e:
+            logger.exception(f"Failed to generate session title for session {session_id}: {str(e)}")
 
     try:
         agent_graph = await get_agent_graph(
@@ -285,6 +322,11 @@ async def ask(
             )
             orgs_db.update_one(
                 {"_id": ObjectId(org_id)},
+                {"$inc": {"usage": total_tokens_used_including_system}},
+                upsert=True
+            )
+            users_db.update_one(
+                {"_id": ObjectId(user["_id"])},
                 {"$inc": {"usage": total_tokens_used_including_system}},
                 upsert=True
             )
@@ -593,10 +635,8 @@ def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
 def get_usage(token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
     
-    sessions = sessions_db.find({"user_id": str(user["_id"])})
-
-    usage: int = 0
-    for session in sessions:
-        usage += session.get("token_usage", {}).get("total_tokens", 0)
+    usage = users_db.find_one({"_id": ObjectId(user["_id"])}, {"usage": 1})
+    if not usage:
+        return {"usage": 0}
     
-    return {"usage": usage}
+    return {"usage": usage.get("usage", 0)}

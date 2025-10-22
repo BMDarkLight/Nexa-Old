@@ -1,14 +1,18 @@
-import pytest
 from httpx import AsyncClient
 from httpx import ASGITransport
 from fastapi.testclient import TestClient
 from bson import ObjectId
 import uuid
 import json
+import types
+import pytest
+import pandas as pd
 
 from api.main import app, pwd_context
 from api.database import users_db, orgs_db, sessions_db
 from langchain.schema import HumanMessage, AIMessage
+from langchain.chat_models import ChatOpenAI
+from langchain_experimental.agents import create_pandas_dataframe_agent
 
 client = TestClient(app)
 
@@ -152,3 +156,73 @@ async def test_edit_message_success(test_user_token, test_user):
         assert session_doc["chat_history"][0]["assistant"] in response_text
         assert session_doc["chat_history"][1]["user"] == "Another Question"
         assert session_doc["chat_history"][1]["assistant"] == "Another Answer"
+
+def mock_retriever_tool():
+    """A simple mock retriever tool for testing."""
+    class MockRetriever:
+        def __init__(self):
+            self.called_with = []
+        def get_relevant_documents(self, query):
+            self.called_with.append(query)
+            return [{"content": f"Retrieved doc for: {query}"}]
+    return MockRetriever()
+
+
+class MockLLM:
+    """A simple mock LLM for agent testing."""
+    def __init__(self, *args, **kwargs):
+        self.called_with = []
+    def __call__(self, prompt, **kwargs):
+        self.called_with.append(prompt)
+        return f"LLM response to: {prompt}"
+    def generate(self, prompts, **kwargs):
+        return [self(prompt) for prompt in prompts]
+    def __getattr__(self, item):
+        # For compatibility with LangChain interface
+        return lambda *a, **kw: "mocked"
+
+
+def initialize_agent(tools, llm, agent_type=None, **kwargs):
+    """A minimal mock initialize_agent for testing."""
+    class MockAgent:
+        def __init__(self, tools, llm):
+            self.tools = tools
+            self.llm = llm
+        def run(self, input):
+            # Use retriever tool if present
+            retriever = None
+            for tool in self.tools:
+                if hasattr(tool, "get_relevant_documents"):
+                    retriever = tool
+                    break
+            docs = retriever.get_relevant_documents(input) if retriever else []
+            llm_response = self.llm(f"Query: {input}, Docs: {docs}")
+            return f"Agent result: {llm_response}"
+    return MockAgent(tools, llm)
+
+
+# Test the agent's retrieval functionality with a real pandas DataFrame and ChatOpenAI
+@pytest.mark.asyncio
+async def test_agent_retrieval_functionality_with_dataframe():
+    # Create a small sample DataFrame representing CSV data
+    data = {
+        "Name": ["Roy Berry", "Alice Smith", "Bob Johnson"],
+        "Age": [34, 28, 45],
+        "Occupation": ["Engineer", "Data Scientist", "Manager"]
+    }
+    df = pd.DataFrame(data)
+
+    # Use ChatOpenAI with low temperature for deterministic output
+    llm = ChatOpenAI(temperature=0)
+
+    # Create a pandas dataframe agent
+    agent = create_pandas_dataframe_agent(llm, df, verbose=False, allow_dangerous_code=True)
+
+    # Query the agent about a user
+    query = "List all information about the user whose name is 'Roy Berry'."
+    response = agent.run(query)
+
+    # Assert that the response mentions Roy Berry and contains relevant information
+    assert "Roy Berry" in response
+    assert "Engineer" in response
+    assert "34" in response

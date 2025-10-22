@@ -207,6 +207,7 @@ def invite_signin(
 
     return {"message": "Invited user signed up successfully."}
 
+# --- Organization Usage and Plan Routes ---
 @router.get("/organization/usage", response_model=dict)
 def get_organization_usage(token: str = Depends(oauth2_scheme)):
     if not token:
@@ -232,3 +233,123 @@ def get_organization_usage(token: str = Depends(oauth2_scheme)):
     quota = 10000000 if plan == "enterprise" else 500000 
 
     return {"organization": organization["name"], "plan": plan, "usage": usage, "quota": quota}
+
+@router.get("/organization/plan")
+def get_organization_plan(token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    org_id = user.get("organization")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="User does not belong to any organization")
+
+    organization = orgs_db.find_one({"_id": ObjectId(org_id)})
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if user.get("permission") not in ("orgadmin", "sysadmin"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    plan = organization.get("plan", "free")
+
+    return {"organization": organization["name"], "plan": plan}
+
+# --- Organization Admin / Sysadmin Routes ---
+@router.get("/organization/{name}/usage")
+def get_specific_organization_usage(name: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    organization = orgs_db.find_one({"name": name})
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    usage = organization.get("usage", 0)
+    plan = organization.get("plan", "free")
+    quota = 10000000 if plan == "enterprise" else 500000 
+
+    return {"organization": organization["name"], "plan": plan, "usage": usage, "quota": quota}
+
+@router.put("/organization/{name}/plan")
+def update_organization_plan(name: str, plan: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    organization = orgs_db.find_one({"name": name})
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if plan not in ("free", "enterprise"):
+        raise HTTPException(status_code=400, detail="Invalid plan specified")
+
+    try:
+        orgs_db.update_one({"_id": organization["_id"]}, {"$set": {"plan": plan}})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database Error: {e}")
+
+    return {"message": f"Organization '{name}' plan updated to '{plan}' successfully."}
+
+@router.delete("/organization/{name}", status_code=200)
+def delete_organization(name: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    organization = orgs_db.find_one({"name": name})
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    try:
+        orgs_db.delete_one({"_id": organization["_id"]})
+        users_db.delete_many({"organization": organization["_id"]})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database Error: {e}")
+
+    return {"message": f"Organization '{name}' and its users have been deleted successfully."}
+
+@router.post("/organization/{name}/reset_usage", status_code=200)
+def reset_organization_usage(name: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    organization = orgs_db.find_one({"name": name})
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    try:
+        orgs_db.update_one({"_id": organization["_id"]}, {"$set": {"usage": 0}})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database Error: {e}")
+
+    return {"message": f"Organization '{name}' usage has been reset successfully."}

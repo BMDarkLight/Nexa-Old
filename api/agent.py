@@ -1,17 +1,22 @@
-from langsmith import traceable
 from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from langchain.callbacks.manager import CallbackManager
+from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
+from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
+from langchain_experimental.tools import PythonAstREPLTool
+from langchain.agents import initialize_agent, AgentType
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
+import pandas as pd
+import logging
+import traceback
+import tempfile
+import os
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
-
-# --- Robust TokenCountingCallbackHandler ---
-from langchain.callbacks.base import BaseCallbackHandler
+from api.database import agents_db, connectors_db, knowledge_db
 
 class TokenCountingCallbackHandler(BaseCallbackHandler):
     def __init__(self):
@@ -23,12 +28,10 @@ class TokenCountingCallbackHandler(BaseCallbackHandler):
         self.total_tokens = 0
 
     def on_llm_end(self, response, **kwargs):
-        # Safely extract token usage from LLM response
         usage = getattr(response, "llm_output", {}).get("token_usage", {})
         self.prompt_tokens += usage.get("prompt_tokens", 0)
         self.completion_tokens += usage.get("completion_tokens", 0)
         self.total_tokens += usage.get("total_tokens", 0)
-from api.database import agents_db, connectors_db, knowledge_db, minio_client
 
 
 class LoggingChatOpenAI(ChatOpenAI):
@@ -39,7 +42,6 @@ class LoggingChatOpenAI(ChatOpenAI):
         return super().generate(messages, *args, **kwargs)
 
 def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
-    # Only used in this file, but keep as required by context
     import re, unidecode
     name_ascii = unidecode.unidecode(name)
     sanitized = re.sub(r'[^a-zA-Z0-9_-]+', '_', name_ascii)
@@ -57,99 +59,187 @@ def retrieve_relevant_context(
 ) -> str:
     """
     Retrieve the most relevant context from a list of context_docs for the given question.
-    Handles both tabular and text document chunks. Returns a string of relevant context.
+    For text documents: uses embedding similarity to select top-n chunks (unchanged).
+    For tabular CSV/Excel documents: reconstructs DataFrame and uses a Pandas agent to generate context.
+    The result merges tabular agent outputs with the text-based top-n chunks.
     """
+
+    logger = logging.getLogger("context_retriever")
+    logger.debug("Starting retrieval of relevant context for question: %r", question)
+
     if not context_docs or not question:
+        logger.warning("No context_docs or question provided to retrieve_relevant_context.")
         return "⚠️ No relevant context found for this question."
 
     question_text = question if isinstance(question, str) else " ".join(question)
     try:
         question_emb = embed_question(question_text)
-    except Exception:
+        logger.debug("Successfully embedded question.")
+    except Exception as exc:
+        logger.error("Failed to embed question: %s", exc)
         return "⚠️ No relevant context found for this question."
 
-    tabular_rows_scored = []
+    tabular_context_outputs = []
+    tabular_file_keys = set()
     text_chunks_scored = []
 
     for idx, doc in enumerate(context_docs):
         try:
             doc_is_tabular = doc.get("is_tabular", False)
             file_key = doc.get("file_key", None)
-            if doc_is_tabular:
-                if not file_key:
-                    continue
-
-                tabular_rows = [
-                    row_doc for row_doc in context_docs
-                    if row_doc.get("file_key") == file_key and row_doc.get("embedding")
-                ]
-                if not tabular_rows:
-                    continue
-
-                row_similarities = []
-                for row_doc in tabular_rows:
-                    row_text = row_doc.get("text", "")
-                    row_emb = row_doc["embedding"]
-                    sim = similarity(question_emb, row_emb)
-                    row_similarities.append((sim, row_text))
-
-                row_similarities.sort(reverse=True, key=lambda x: x[0])
-                top_rows_actual = row_similarities[:top_rows]
-                filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
-                context_text = f"📊 Top relevant rows from '{filename}':\n" + "\n".join(row for _, row in top_rows_actual)
-
-                max_score = top_rows_actual[0][0] if top_rows_actual else 0
-                tabular_rows_scored.append((max_score, context_text))
+            doc_type = "tabular" if doc_is_tabular else "text"
+            logger.debug("Processing doc #%d: file_key=%r, type=%s", idx, file_key, doc_type)
+            if doc_is_tabular and file_key:
+                tabular_file_keys.add(file_key)
+                logger.debug("Document is tabular, will process with Pandas agent later: file_key=%r", file_key)
                 continue
-            
+
             if "chunks" in doc and isinstance(doc["chunks"], list):
-                for chunk in doc["chunks"]:
+                logger.debug("Document contains %d chunks.", len(doc["chunks"]))
+                for chunk_idx, chunk in enumerate(doc["chunks"]):
                     chunk_text = chunk.get("text", "")
                     if not chunk_text.strip():
+                        logger.debug("Skipping empty chunk #%d in doc #%d.", chunk_idx, idx)
                         continue
                     try:
                         chunk_emb = chunk.get("embedding") or embed_question(chunk_text[:2000])
                         sim = similarity(question_emb, chunk_emb)
                         text_chunks_scored.append((sim, chunk_text))
-                    except Exception:
-                        pass
+                        logger.debug("Chunk #%d in doc #%d: similarity=%.4f", chunk_idx, idx, sim)
+                    except Exception as exc:
+                        logger.warning("Failed to embed/score chunk #%d in doc #%d: %s", chunk_idx, idx, exc)
             elif doc.get("text"):
                 chunk_text = doc["text"]
                 try:
                     chunk_emb = doc.get("embedding") or embed_question(chunk_text[:2000])
                     sim = similarity(question_emb, chunk_emb)
                     text_chunks_scored.append((sim, chunk_text))
-                except Exception:
-                    pass
-            else:
-                pass
-        except Exception:
-            pass
+                    logger.debug("Single text doc #%d: similarity=%.4f", idx, sim)
+                except Exception as exc:
+                    logger.warning("Failed to embed/score single text doc #%d: %s", idx, exc)
+        except Exception as exc:
+            logger.error("Exception processing doc #%d: %s", idx, exc)
+
+    for file_key in tabular_file_keys:
+        logger.info("Processing tabular file: file_key=%r", file_key)
+        tabular_docs = [doc for doc in context_docs if doc.get("file_key") == file_key and doc.get("is_tabular", False)]
+        df = None
+        filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
+        data_json = None
+        for doc in tabular_docs:
+            if "data_json" in doc and doc["data_json"]:
+                data_json = doc["data_json"]
+                break
+        if data_json:
+            try:
+                df = pd.read_json(data_json, orient="split")
+                logger.debug("Loaded DataFrame from data_json for file: %s, shape=%s", filename, df.shape)
+            except Exception as exc:
+                logger.error("Failed to load DataFrame from data_json for file_key %r: %s", file_key, exc)
+                df = None
+        if df is None and tabular_docs:
+            rows = []
+            header = None
+            for doc in tabular_docs:
+                if "row" in doc and isinstance(doc["row"], dict):
+                    rows.append(doc["row"])
+                elif "text" in doc and doc["text"]:
+                    try:
+                        if not header and "metadata" in doc and "header" in doc["metadata"]:
+                            header = doc["metadata"]["header"]
+                        if header:
+                            values = [v.strip() for v in doc["text"].split(",")]
+                            row_dict = dict(zip(header, values))
+                            rows.append(row_dict)
+                    except Exception as exc:
+                        logger.warning("Failed to parse row from text in tabular doc: %s", exc)
+            if rows:
+                try:
+                    df = pd.DataFrame(rows)
+                    logger.debug("Constructed DataFrame from rows for file: %s, shape=%s", filename, df.shape)
+                except Exception as exc:
+                    logger.error("Failed to construct DataFrame from rows for file_key %r: %s", file_key, exc)
+                    df = None
+        if df is not None and not df.empty:
+            try:
+                logger.info("Invoking PythonAstREPLTool agent on tabular file: %s", filename)
+                csv_tool = PythonAstREPLTool()
+                csv_tool.name = "csv_analyzer"
+                csv_tool.description = (
+                    "Executes Python code to analyze structured tabular data. "
+                    "Use it to compute, summarize, or visualize data accurately from the given DataFrame."
+                )
+
+                llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+                analysis_agent = initialize_agent(
+                    tools=[csv_tool],
+                    llm=llm,
+                    agent=AgentType.OPENAI_FUNCTIONS,
+                    verbose=False,
+                    handle_parsing_errors=True,
+                )
+
+                instruction_text = (
+                    "You are analyzing a structured DataFrame called 'df' that contains the full dataset loaded from the organization's knowledge base. "
+                    "You have full access to the DataFrame in memory and can execute real Python code to explore and analyze it.\n\n"
+                    "When you begin, use Python commands like:\n"
+                    "  - df.head() to view the first few rows\n"
+                    "  - df.info() to inspect columns and data types\n"
+                    "  - df.describe() to summarize numeric columns\n"
+                    "  - df['column_name'].value_counts() or df.groupby('column_name') for grouping and aggregation\n"
+                    "You should always execute Python code using the variable 'df' to compute accurate answers.\n\n"
+                )
+
+                question_text_token_estimate = len(question_text.split())
+                df_token_estimate = len(df.to_csv(index=False).split())
+                instruction_token_estimate = len(instruction_text.split())
+
+                if instruction_token_estimate + question_text_token_estimate + df_token_estimate < 8000:
+                    tabular_prompt = (
+                        instruction_text +
+                        f"The entire CSV is provided below:\n{df.to_csv(index=False)}\n\n"
+                        f"User's question: {question_text}\n"
+                        "Write and run Python code to explore, summarize, and answer based on the full DataFrame."
+                    )
+                else:
+                    tabular_prompt = (
+                        instruction_text +
+                        f"User's question: {question_text}\n"
+                        "Do NOT rely on example rows for computation; run Python code to explore and summarize the full DataFrame variable 'df'."
+                    )
+
+                agent_response = analysis_agent.run(tabular_prompt)
+                logger.info("PythonAstREPLTool agent completed for file: %s", filename)
+                tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
+            except Exception as exc:
+                logger.error(f"Failed to process tabular data with PythonAstREPLTool for file_key {file_key}:\n{traceback.format_exc()}")
+        else:
+            logger.warning("No valid DataFrame found for tabular file: %s", filename)
 
     selected_contexts = []
-    num_text_chunks_selected = 0
-    num_tabular_groups_selected = 0
-
     if text_chunks_scored:
         text_chunks_scored.sort(reverse=True, key=lambda x: x[0])
+        logger.info("Sorted %d text chunks by similarity.", len(text_chunks_scored))
         top_text_chunks = text_chunks_scored[:top_n]
-        for sim, text in top_text_chunks:
+        for i, (sim, text) in enumerate(top_text_chunks):
+            logger.debug("Selected top text chunk #%d with similarity %.4f", i, sim)
             selected_contexts.append(text)
-        num_text_chunks_selected = len(top_text_chunks)
 
-    if tabular_rows_scored:
-        tabular_rows_scored.sort(reverse=True, key=lambda x: x[0])
-        for score, tabular_text in tabular_rows_scored[:top_n]:
-            selected_contexts.append(tabular_text)
-        num_tabular_groups_selected = min(top_n, len(tabular_rows_scored))
+    if tabular_context_outputs:
+        logger.info("Appending %d tabular context outputs.", len(tabular_context_outputs))
+        selected_contexts.extend(tabular_context_outputs)
 
     if not selected_contexts:
+        logger.warning("No relevant context found after processing all docs.")
         return "⚠️ No relevant context found for this question."
 
+    logger.info("Returning %d selected context blocks (text: %d, tabular: %d).",
+                len(selected_contexts),
+                len(text_chunks_scored[:top_n]),
+                len(tabular_context_outputs))
     final_context = "\n\n".join(selected_contexts)
     return final_context
 
-@traceable
 async def get_agent_graph(
     question: str,
     organization_id: ObjectId,
@@ -168,27 +258,30 @@ async def get_agent_graph(
     selected_agent = None
 
     if agent_id:
-        selected_agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": organization_id})
-    elif agent_id == "auto":
-        agents = list(agents_db.find({"org": organization_id}))
-        if agents:
-            agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in agents])
-            router_prompt = [
-                SystemMessage(
-                    content=(
-                        "You are an expert at routing a user's request to the correct agent. "
-                        "Based on the user's question, select the best agent from the following list. "
-                        "You must output **only the name** of the agent you choose. "
-                        "If no agent seems suitable, output 'Generalist'."
-                        f"\n\nAvailable Agents:\n{agent_descriptions}"
-                    )
-                ),
-                HumanMessage(content=question),
-            ]
-            router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-            selected_agent_name_response = await router_llm.ainvoke(router_prompt)
-            selected_agent_name = selected_agent_name_response.content.strip()
-            selected_agent = next((agent for agent in agents if agent["name"] == selected_agent_name), None)
+        if agent_id == "auto":
+            agents = list(agents_db.find({"org": organization_id}))
+            if agents:
+                agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in agents])
+                router_prompt = [
+                    SystemMessage(
+                        content=(
+                            "You are an expert at routing a user's request to the correct agent. "
+                            "Based on the user's question, select the best agent from the following list. "
+                            "You must output **only the name** of the agent you choose. "
+                            "If no agent seems suitable, output 'Generalist'."
+                            f"\n\nAvailable Agents:\n{agent_descriptions}"
+                        )
+                    ),
+                    HumanMessage(content=question),
+                ]
+                router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+                selected_agent_name_response = await router_llm.ainvoke(router_prompt)
+                selected_agent_name = selected_agent_name_response.content.strip()
+                selected_agent = next((agent for agent in agents if agent["name"] == selected_agent_name), None)
+        elif agent_id == "generalist":
+            selected_agent = None
+        else:
+            selected_agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": organization_id})
     else:
         selected_agent = None
 
@@ -256,6 +349,7 @@ async def get_agent_graph(
 
         context_docs = []
         context_text = ""
+        logger = logging.getLogger("context_retriever")
         for context_entry_id in context_ids:
             entry_doc = knowledge_db.find_one({"_id": ObjectId(context_entry_id)})
             if not entry_doc:
@@ -264,17 +358,20 @@ async def get_agent_graph(
             filename = "_".join(entry_doc.get("file_key", "").split("_")[1:]) if entry_doc.get("file_key") else ""
 
             if entry_doc.get("is_tabular", False):
-                entry_exp = "The data is structured an tabular, Use the provided rows to answer questions accurately.\n"
-                file_key = entry_doc.get("file_key")
-                row_docs = list(knowledge_db.find({
-                    "file_key": file_key,
-                    "is_tabular": True,
-                    "embedding": {"$exists": True},
-                    "text": {"$exists": True}
-                }))
-                context_docs.extend(row_docs)
+                entry_exp = "The data is structured as a tabular CSV DataFrame. Use the provided data to answer questions accurately.\n"
+                data_json = entry_doc.get("data_json")
+                logger.info("Tabular context detected for file_key %s", entry_doc.get("file_key"))
+                if data_json:
+                    logger.info("Adding tabular entry to context_docs with data_json for file_key %s", entry_doc.get("file_key"))
+                    context_docs.append({
+                        "data_json": data_json,
+                        "file_key": entry_doc.get("file_key"),
+                        "is_tabular": True
+                    })
+                else:
+                    logger.warning("No data_json found for tabular context entry with file_key %s", entry_doc.get("file_key"))
             else:
-                entry_exp = "The data is text, it is likely a document that you have access to, َUse the provided context from the file to answer question accordingly.\n"
+                entry_exp = "The data is text, it is likely a document that you have access to. Use the provided context from the file to answer question accordingly.\n"
                 if "chunks" in entry_doc:
                     context_docs.extend(entry_doc["chunks"])
                 elif "text" in entry_doc:
@@ -327,7 +424,6 @@ async def get_agent_graph(
 
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
-        # Remove streaming token handler logic, instead count tokens after composing prompt and completion
         agent_llm = LoggingChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
