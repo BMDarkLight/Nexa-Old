@@ -59,6 +59,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            NEXT_PUBLIC_SERVER_URL=${{ secrets.SERVER_URL }}
+            NEXT_PUBLIC_API_PORT=${{ secrets.API_PORT }}
+            NEXT_PUBLIC_UI_PORT=${{ secrets.UI_PORT }}
 
   deploy:
     needs: build-and-push

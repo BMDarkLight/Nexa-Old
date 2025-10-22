@@ -40,6 +40,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <script src="/env.js" async></script>
+      </head>
       <body className={myFont.className}>
              <SessionProvider>
               {children}

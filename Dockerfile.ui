@@ -10,6 +10,17 @@ WORKDIR /app/web
 RUN npm ci
 
 COPY web .
+
+# Build arguments for build-time environment variables
+ARG NEXT_PUBLIC_SERVER_URL
+ARG NEXT_PUBLIC_API_PORT
+ARG NEXT_PUBLIC_UI_PORT
+
+# Set environment variables for build
+ENV NEXT_PUBLIC_SERVER_URL=$NEXT_PUBLIC_SERVER_URL
+ENV NEXT_PUBLIC_API_PORT=$NEXT_PUBLIC_API_PORT
+ENV NEXT_PUBLIC_UI_PORT=$NEXT_PUBLIC_UI_PORT
+
 RUN npm run build
 
 # -------- Stage 2: Production --------
@@ -27,9 +38,10 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/web/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/web/.next/static ./.next/static
+COPY --from=builder /app/web/scripts ./scripts
 
 USER nextjs
 
 EXPOSE ${UI_PORT}
 
-CMD ["sh", "-c", "PORT=$UI_PORT node server.js"]
+CMD ["sh", "-c", "node scripts/load-env.js && PORT=$UI_PORT node server.js"]
