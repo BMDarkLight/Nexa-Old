@@ -11,7 +11,7 @@ from bson import ObjectId
 import pandas as pd
 import logging
 import traceback
-import signal
+import asyncio
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
@@ -173,7 +173,7 @@ def retrieve_relevant_context(
                 analysis_agent = initialize_agent(
                     tools=[csv_tool],
                     llm=llm,
-                    agent=AgentType.OPENAI_FUNCTIONS,
+                    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
                     verbose=False,
                     handle_parsing_errors=True,
                 )
@@ -189,22 +189,23 @@ def retrieve_relevant_context(
                     "You should always execute Python code using the variable 'df' to compute accurate answers.\n\n"
                 )
 
-                question_text_token_estimate = len(question_text.split())
                 df_token_estimate = len(df.to_csv(index=False).split())
-                instruction_token_estimate = len(instruction_text.split())
 
-                if instruction_token_estimate + question_text_token_estimate + df_token_estimate < 8000:
+                MAX_ROWS_INLINE = 20
+                if len(df) <= MAX_ROWS_INLINE and df_token_estimate < 2000:
                     tabular_prompt = (
                         instruction_text +
-                        f"The entire CSV is provided below:\n{df.to_csv(index=False)}\n\n"
+                        f"The CSV is small, here are all rows:\n{df.to_csv(index=False)}\n\n"
                         f"User's question: {question_text}\n"
                         "Write and run Python code to explore, summarize, and answer based on the full DataFrame."
                     )
                 else:
                     tabular_prompt = (
                         instruction_text +
+                        "The CSV file is large, so do NOT attempt to view all data at once.\n"
+                        "Use Python code like df.head(), df.info(), or df.describe() to explore and analyze it.\n\n"
                         f"User's question: {question_text}\n"
-                        "Do NOT rely on example rows for computation; run Python code to explore and summarize the full DataFrame variable 'df'."
+                        "Write and execute Python code using the 'df' variable to compute or summarize the answer precisely."
                     )
 
                 pd.set_option("display.max_rows", 20)
@@ -215,15 +216,13 @@ def retrieve_relevant_context(
                     logger.warning("DataFrame too large (%d rows); sampling 500 rows for analysis.", len(df))
                     df = df.sample(500, random_state=42)
 
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("PythonAstREPLTool execution timed out")
-
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(15)
                 try:
-                    agent_response = analysis_agent.run(tabular_prompt)
-                finally:
-                    signal.alarm(0)
+                    agent_response = asyncio.run(asyncio.wait_for(
+                        analysis_agent.ainvoke(tabular_prompt),
+                        timeout=20
+                    ))
+                except asyncio.TimeoutError:
+                    agent_response = "⚠️ Timed out while executing REPL tool; the dataset might be too large."
                 logger.info("PythonAstREPLTool agent completed for file: %s", filename)
                 tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
             except Exception as exc:
