@@ -2,15 +2,15 @@ from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
-from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
-from langchain_experimental.tools import PythonAstREPLTool
 from langchain.agents import initialize_agent, AgentType
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
 import pandas as pd
 import logging
-import traceback
+import functools
+import re
 import asyncio
 
 from api.embed import similarity, embed_question
@@ -119,11 +119,6 @@ async def retrieve_relevant_context(
         except Exception as exc:
             logger.error("Exception processing doc #%d: %s", idx, exc)
 
-    # --- FAST TABULAR CONTEXT RETRIEVAL WITH HYBRID PRE-FILTERING ---
-    import functools
-    import re
-    from concurrent.futures import ThreadPoolExecutor
-
     @functools.lru_cache(maxsize=32)
     def _cached_load_df(file_key, data_json):
         try:
@@ -164,28 +159,61 @@ async def retrieve_relevant_context(
                 df = None
         return df
 
-    def _infer_column_filters(question, df):
-        """
-        Try to infer column-value pairs from the question.
-        Returns a dict: {col: value}
-        """
-        filters = {}
-        question_lower = question.lower()
+    def _classify_query(question, df):
+        """Classify the query type for a DataFrame question."""
+        q = question.lower()
+        if re.match(r"^\s*list all\b", q) or re.match(r"^\s*show all\b", q):
+            return "list_all"
         for col in df.columns:
-            try:
-                if pd.api.types.is_string_dtype(df[col]) or df[col].nunique() < 100:
-                    uniques = df[col].dropna().unique()
-                    uniques = sorted(uniques, key=lambda x: -len(str(x)))
-                    for val in uniques:
-                        val_str = str(val).strip()
-                        if not val_str:
-                            continue
-                        if val_str.lower() in question_lower:
-                            filters[col] = val_str
-                            break
-            except Exception:
-                continue
-        return filters
+            if re.search(rf"\b{col}\b.*\b(is|=|equals|named|with|of|to)\b.*\b([\w@.\- ]+)", q):
+                return "filter_exact"
+        if re.search(r"(contains|starts with|ends with|pattern)", q):
+            return "filter_pattern"
+        if re.search(r"\b(average|mean|sum|total|count|min|max)\b", q):
+            return "aggregate"
+        if re.search(r"(info for|details for|row for|record for)", q):
+            return "full_row"
+        return "unknown"
+
+    def _extract_column_value(question, df):
+        """Try to extract column and value for filtering."""
+        q = question.lower()
+        for col in df.columns:
+            m = re.search(rf"\b{col}\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
+            if m:
+                return col, m.group(2).strip()
+        return None, None
+
+    def _extract_pattern(question, df):
+        m = re.search(r"(?:contains|starts with|ends with)\s+['\"]?([\w@.\- ]+)['\"]?", question, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        return None
+
+    def _extract_aggregate(question, df):
+        agg_map = {
+            "average": "mean",
+            "mean": "mean",
+            "sum": "sum",
+            "total": "sum",
+            "count": "count",
+            "min": "min",
+            "max": "max"
+        }
+        for agg_word, agg_func in agg_map.items():
+            m = re.search(rf"{agg_word}\s+(?:of\s+)?([\w_]+)", question, re.IGNORECASE)
+            if m:
+                col = m.group(1)
+                if col in df.columns:
+                    return agg_func, col
+        return None, None
+
+    def _extract_row_identifier(question, df):
+        for col in df.columns:
+            m = re.search(rf"(?:info for|details for|row for|record for)\s+['\"]?([\w@.\- ]+)['\"]?", question, re.IGNORECASE)
+            if m:
+                return col, m.group(1).strip()
+        return None, None
 
     if tabular_file_keys:
         logger.info("Loading tabular DataFrames for %d file_keys...", len(tabular_file_keys))
@@ -202,72 +230,108 @@ async def retrieve_relevant_context(
         for file_key, df in zip(tabular_file_key_list, dfs):
             filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
             if df is not None and not df.empty:
-                MAX_ROWS = 500
-                if len(df) > MAX_ROWS:
-                    logger.warning("DataFrame for %s too large (%d rows); sampling %d rows.", filename, len(df), MAX_ROWS)
-                    
-                filters = _infer_column_filters(question_text, df)
-                filtered_df = None
-                filter_desc = ""
                 try:
-                    if filters:
-                        filtered_df = df
-                        filter_descs = []
-                        for col, val in filters.items():
-                            if pd.api.types.is_string_dtype(df[col]):
-                                mask = df[col].astype(str).str.contains(re.escape(val), case=False, na=False)
-                                filter_descs.append(f"{col} contains '{val}'")
+                    query_type = _classify_query(question_text, df)
+                    logger.info("Classified query as %r for table %s", query_type, filename)
+                    output = None
+                    desc = ""
+                    if query_type == "list_all":
+                        MAX_ROWS = 20
+                        output = df.head(MAX_ROWS)
+                        desc = f"List of all records (showing first {MAX_ROWS} rows):"
+                    elif query_type == "filter_exact":
+                        col, val = _extract_column_value(question_text, df)
+                        if col and val:
+                            filtered = df[df[col].astype(str).str.lower() == val.lower()]
+                            output = filtered
+                            desc = f"Filtered rows where {col} == '{val}' (case-insensitive):"
+                        else:
+                            output = df.head(10)
+                            desc = "Could not infer filter; showing sample rows:"
+                    elif query_type == "filter_pattern":
+                        pattern = _extract_pattern(question_text, df)
+                        col = None
+                        for c in df.columns:
+                            if re.search(rf"\b{c}\b", question_text, re.IGNORECASE):
+                                col = c
+                                break
+                        if col and pattern:
+                            filtered = df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
+                            output = filtered
+                            desc = f"Rows where {col} contains '{pattern}':"
+                        else:
+                            output = df.head(10)
+                            desc = "Could not infer pattern/column; showing sample rows:"
+                    elif query_type == "aggregate":
+                        agg_func, col = _extract_aggregate(question_text, df)
+                        if agg_func and col:
+                            if agg_func == "count":
+                                result = df[col].count()
+                                output = pd.DataFrame({f"count_{col}": [result]})
+                                desc = f"Count of {col}:"
                             else:
-                                mask = df[col] == val
-                                filter_descs.append(f"{col} == {val}")
-                            filtered_df = filtered_df[mask]
-                        filter_desc = f"Filtered rows where: {', '.join(filter_descs)}"
-                        if filtered_df.empty:
-                            logger.info("Filtering on %s for %s resulted in empty DataFrame.", filename, filters)
-                            filtered_df = None
-                    if filtered_df is not None and not filtered_df.empty:
-                        df_to_use = filtered_df
-                        logger.info("Using filtered DataFrame for %s with %d rows (filters: %r)", filename, len(filtered_df), filters)
+                                try:
+                                    result = getattr(df[col], agg_func)()
+                                except Exception:
+                                    result = None
+                                output = pd.DataFrame({f"{agg_func}_{col}": [result]})
+                                desc = f"{agg_func.title()} of {col}:"
+                        else:
+                            output = df.describe(include='all').T
+                            desc = "Could not infer aggregation; showing describe():"
+                    elif query_type == "full_row":
+                        col, val = _extract_row_identifier(question_text, df)
+                        if col and val:
+                            filtered = df[df[col].astype(str).str.lower() == val.lower()]
+                            output = filtered
+                            desc = f"Full row for {col} == '{val}':"
+                        else:
+                            output = df.head(10)
+                            desc = "Could not infer row identifier; showing sample rows:"
                     else:
-                        n_sample = min(100, len(df))
-                        df_to_use = df.head(n_sample)
-                        filter_desc = f"Sampled first {n_sample} rows (no specific filter inferred from question)."
-                        logger.info("No specific filter for %s; using first %d rows.", filename, n_sample)
-                except Exception as exc:
-                    logger.error("Error during DataFrame filtering for %s: %s", filename, exc)
-                    n_sample = min(100, len(df))
-                    df_to_use = df.head(n_sample)
-                    filter_desc = f"Sampled first {n_sample} rows (filtering error)."
+                        output = df.head(10)
+                        desc = "Sample of data (unclassified query):"
 
-                schema_lines = []
-                schema_lines.append(f"Columns: {', '.join(df.columns)}")
-                schema_lines.append(f"Column types: {', '.join(str(df[col].dtype) for col in df.columns)}")
-                N_HEAD = min(5, len(df_to_use))
-                sample_csv = df_to_use.head(N_HEAD).to_csv(index=False)
-                summary_stats = df_to_use.describe(include='all').to_string()
-                schema_summary = (
-                    f"Table '{filename}':\n"
-                    f"{schema_lines[0]}\n"
-                    f"{schema_lines[1]}\n"
-                    f"{filter_desc}\n"
-                    f"Sample of {len(df_to_use)} rows (showing first {N_HEAD} rows):\n{sample_csv}\n"
-                    f"Summary statistics (of filtered/sample rows):\n{summary_stats}\n"
-                )
-                llm_prompt = (
-                    f"You are given a table from the organization's knowledge base.\n"
-                    f"{schema_summary}\n"
-                    f"User's question: {question_text}\n"
-                    f"Based only on the provided schema, filtered/sample rows, and summary statistics above, answer the user's question about the table. "
-                    f"If the answer cannot be determined from the provided data, say so."
-                )
-                try:
-                    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-                    response = await llm.ainvoke([HumanMessage(content=llm_prompt)])
-                    answer = response.content if hasattr(response, "content") else str(response)
+                    if output is not None and not output.empty:
+                        N_HEAD = min(5, len(output))
+                        sample_csv = output.head(N_HEAD).to_csv(index=False)
+                        summary_stats = output.describe(include='all').to_string()
+                        schema_summary = (
+                            f"Table '{filename}':\n"
+                            f"Columns: {', '.join(df.columns)}\n"
+                            f"Column types: {', '.join(str(df[col].dtype) for col in df.columns)}\n"
+                            f"{desc}\n"
+                            f"Sample of {len(output)} rows (showing first {N_HEAD} rows):\n{sample_csv}\n"
+                            f"Summary statistics (of result rows):\n{summary_stats}\n"
+                        )
+                    else:
+                        schema_summary = (
+                            f"Table '{filename}':\n"
+                            f"No matching rows found for the query.\n"
+                        )
+
+                    llm_prompt = (
+                        f"You are given a table from the organization's knowledge base.\n"
+                        f"{schema_summary}\n"
+                        f"User's question: {question_text}\n"
+                        f"Answer the user's question using only the data provided above. "
+                        f"Do not invent any information. "
+                        f"Do not apologize, ask the user to wait, or add any procedural commentary. "
+                        f"Do not describe your reasoning steps. "
+                        f"Only provide a concise, factual answer based on the provided rows or summary statistics. "
+                        f"If the answer cannot be determined from the provided data, explicitly state that the knowledge base does not contain the information."
+                    )
+                    try:
+                        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+                        response = await llm.ainvoke([HumanMessage(content=llm_prompt)])
+                        answer = response.content if hasattr(response, "content") else str(response)
+                    except Exception as exc:
+                        logger.error("Failed LLM call for tabular file %s: %s", filename, exc)
+                        answer = f"⚠️ Error analyzing table '{filename}': {exc}"
+                    tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{answer}")
                 except Exception as exc:
-                    logger.error("Failed LLM call for tabular file %s: %s", filename, exc)
-                    answer = f"⚠️ Error analyzing table '{filename}': {exc}"
-                tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{answer}")
+                    logger.error("Error during DataFrame query-classification/execution for %s: %s", filename, exc)
+                    tabular_context_outputs.append(f"⚠️ Error handling table '{filename}': {exc}")
             else:
                 logger.warning("No valid DataFrame found for tabular file: %s", filename)
 
