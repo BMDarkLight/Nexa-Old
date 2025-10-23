@@ -11,8 +11,7 @@ from bson import ObjectId
 import pandas as pd
 import logging
 import traceback
-import tempfile
-import os
+import signal
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
@@ -208,7 +207,23 @@ def retrieve_relevant_context(
                         "Do NOT rely on example rows for computation; run Python code to explore and summarize the full DataFrame variable 'df'."
                     )
 
-                agent_response = analysis_agent.run(tabular_prompt)
+                pd.set_option("display.max_rows", 20)
+                pd.set_option("display.max_columns", 10)
+                pd.set_option("display.width", 120)
+
+                if len(df) > 500:
+                    logger.warning("DataFrame too large (%d rows); sampling 500 rows for analysis.", len(df))
+                    df = df.sample(500, random_state=42)
+
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("PythonAstREPLTool execution timed out")
+
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(15)
+                try:
+                    agent_response = analysis_agent.run(tabular_prompt)
+                finally:
+                    signal.alarm(0)
                 logger.info("PythonAstREPLTool agent completed for file: %s", filename)
                 tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
             except Exception as exc:
