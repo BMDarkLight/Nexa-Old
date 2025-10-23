@@ -50,7 +50,7 @@ def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     llm_label = name.strip()
     return {"tool_name": tool_name, "llm_label": llm_label}
 
-def retrieve_relevant_context(
+async def retrieve_relevant_context(
     question: str | list,
     context_docs: List[Dict[str, Any]],
     top_n: int = 3,
@@ -217,12 +217,21 @@ def retrieve_relevant_context(
                     df = df.sample(500, random_state=42)
 
                 try:
-                    agent_response = asyncio.run(asyncio.wait_for(
-                        analysis_agent.ainvoke(tabular_prompt),
-                        timeout=20
-                    ))
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        agent_response = await asyncio.wait_for(
+                            analysis_agent.ainvoke(tabular_prompt),
+                            timeout=20
+                        )
+                    else:
+                        agent_response = loop.run_until_complete(asyncio.wait_for(
+                            analysis_agent.ainvoke(tabular_prompt),
+                            timeout=20
+                        ))
                 except asyncio.TimeoutError:
                     agent_response = "⚠️ Timed out while executing REPL tool; the dataset might be too large."
+                except Exception as exc:
+                    agent_response = f"⚠️ Error running REPL analysis: {exc}"
                 logger.info("PythonAstREPLTool agent completed for file: %s", filename)
                 tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
             except Exception as exc:
@@ -393,7 +402,7 @@ async def get_agent_graph(
 
             context_text += f"📄 Document: '{filename}'\n{entry_doc.get('text', '')}\n{entry_exp}\n"
 
-        relevant_context = retrieve_relevant_context(question, context_docs)
+        relevant_context = await retrieve_relevant_context(question, context_docs)
 
         system_prompt = f"""
             You are an AI agent built by user in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.
