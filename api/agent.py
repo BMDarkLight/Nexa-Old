@@ -119,11 +119,11 @@ async def retrieve_relevant_context(
         except Exception as exc:
             logger.error("Exception processing doc #%d: %s", idx, exc)
 
-    # --- FAST TABULAR CONTEXT RETRIEVAL ---
+    # --- FAST TABULAR CONTEXT RETRIEVAL WITH HYBRID PRE-FILTERING ---
     import functools
+    import re
     from concurrent.futures import ThreadPoolExecutor
 
-    # LRU cache for DataFrame loading
     @functools.lru_cache(maxsize=32)
     def _cached_load_df(file_key, data_json):
         try:
@@ -141,10 +141,8 @@ async def retrieve_relevant_context(
                 break
         if data_json:
             loop = asyncio.get_running_loop()
-            # Use threadpool for sync Pandas I/O
             df = await loop.run_in_executor(None, _cached_load_df, file_key, data_json)
         else:
-            # Try to reconstruct from rows
             rows = []
             header = None
             for doc in tabular_docs:
@@ -166,6 +164,29 @@ async def retrieve_relevant_context(
                 df = None
         return df
 
+    def _infer_column_filters(question, df):
+        """
+        Try to infer column-value pairs from the question.
+        Returns a dict: {col: value}
+        """
+        filters = {}
+        question_lower = question.lower()
+        for col in df.columns:
+            try:
+                if pd.api.types.is_string_dtype(df[col]) or df[col].nunique() < 100:
+                    uniques = df[col].dropna().unique()
+                    uniques = sorted(uniques, key=lambda x: -len(str(x)))
+                    for val in uniques:
+                        val_str = str(val).strip()
+                        if not val_str:
+                            continue
+                        if val_str.lower() in question_lower:
+                            filters[col] = val_str
+                            break
+            except Exception:
+                continue
+        return filters
+
     if tabular_file_keys:
         logger.info("Loading tabular DataFrames for %d file_keys...", len(tabular_file_keys))
         tabular_file_key_list = list(tabular_file_keys)
@@ -184,26 +205,59 @@ async def retrieve_relevant_context(
                 MAX_ROWS = 500
                 if len(df) > MAX_ROWS:
                     logger.warning("DataFrame for %s too large (%d rows); sampling %d rows.", filename, len(df), MAX_ROWS)
-                    df = df.sample(MAX_ROWS, random_state=42)
+                    
+                filters = _infer_column_filters(question_text, df)
+                filtered_df = None
+                filter_desc = ""
+                try:
+                    if filters:
+                        filtered_df = df
+                        filter_descs = []
+                        for col, val in filters.items():
+                            if pd.api.types.is_string_dtype(df[col]):
+                                mask = df[col].astype(str).str.contains(re.escape(val), case=False, na=False)
+                                filter_descs.append(f"{col} contains '{val}'")
+                            else:
+                                mask = df[col] == val
+                                filter_descs.append(f"{col} == {val}")
+                            filtered_df = filtered_df[mask]
+                        filter_desc = f"Filtered rows where: {', '.join(filter_descs)}"
+                        if filtered_df.empty:
+                            logger.info("Filtering on %s for %s resulted in empty DataFrame.", filename, filters)
+                            filtered_df = None
+                    if filtered_df is not None and not filtered_df.empty:
+                        df_to_use = filtered_df
+                        logger.info("Using filtered DataFrame for %s with %d rows (filters: %r)", filename, len(filtered_df), filters)
+                    else:
+                        n_sample = min(100, len(df))
+                        df_to_use = df.head(n_sample)
+                        filter_desc = f"Sampled first {n_sample} rows (no specific filter inferred from question)."
+                        logger.info("No specific filter for %s; using first %d rows.", filename, n_sample)
+                except Exception as exc:
+                    logger.error("Error during DataFrame filtering for %s: %s", filename, exc)
+                    n_sample = min(100, len(df))
+                    df_to_use = df.head(n_sample)
+                    filter_desc = f"Sampled first {n_sample} rows (filtering error)."
 
                 schema_lines = []
                 schema_lines.append(f"Columns: {', '.join(df.columns)}")
                 schema_lines.append(f"Column types: {', '.join(str(df[col].dtype) for col in df.columns)}")
-                N_HEAD = min(5, len(df))
-                head_csv = df.head(N_HEAD).to_csv(index=False)
-                summary_stats = df.describe(include='all').to_string()
+                N_HEAD = min(5, len(df_to_use))
+                sample_csv = df_to_use.head(N_HEAD).to_csv(index=False)
+                summary_stats = df_to_use.describe(include='all').to_string()
                 schema_summary = (
                     f"Table '{filename}':\n"
                     f"{schema_lines[0]}\n"
                     f"{schema_lines[1]}\n"
-                    f"First {N_HEAD} rows:\n{head_csv}\n"
-                    f"Summary statistics:\n{summary_stats}\n"
+                    f"{filter_desc}\n"
+                    f"Sample of {len(df_to_use)} rows (showing first {N_HEAD} rows):\n{sample_csv}\n"
+                    f"Summary statistics (of filtered/sample rows):\n{summary_stats}\n"
                 )
                 llm_prompt = (
                     f"You are given a table from the organization's knowledge base.\n"
                     f"{schema_summary}\n"
                     f"User's question: {question_text}\n"
-                    f"Based only on the provided schema, sample rows, and summary statistics above, answer the user's question about the table. "
+                    f"Based only on the provided schema, filtered/sample rows, and summary statistics above, answer the user's question about the table. "
                     f"If the answer cannot be determined from the provided data, say so."
                 )
                 try:
