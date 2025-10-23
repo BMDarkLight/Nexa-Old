@@ -90,11 +90,6 @@ jobs:
 
           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
 
-          LANGSMITH_TRACING=${{ secrets.LANGSMITH_TRACING }}
-          LANGSMITH_ENDPOINT=${{ secrets.LANGSMITH_ENDPOINT }}
-          LANGSMITH_API_KEY=${{ secrets.LANGSMITH_API_KEY }}
-          LANGSMITH_PROJECT=${{ secrets.LANGSMITH_PROJECT }}
-
           MONGO_URI=${{ secrets.MONGO_URI }}
 
           MINIO_ENDPOINT=${{ secrets.MINIO_ENDPOINT }}
