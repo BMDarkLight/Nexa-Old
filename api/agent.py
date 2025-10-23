@@ -12,6 +12,9 @@ import logging
 import functools
 import re
 import asyncio
+import unicodedata
+import unidecode
+import difflib
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
@@ -159,13 +162,49 @@ async def retrieve_relevant_context(
                 df = None
         return df
 
+    def _normalize(s):
+        if not isinstance(s, str):
+            s = str(s)
+        s = unicodedata.normalize("NFKC", s)
+        s = s.casefold()
+        s = unidecode.unidecode(s)
+        return s
+
+    def _find_best_column_match(query_col, df_columns):
+        norm_query = _normalize(query_col)
+        norm_cols = {col: _normalize(col) for col in df_columns}
+        for col, norm_col in norm_cols.items():
+            if norm_query == norm_col:
+                return col
+        close = difflib.get_close_matches(norm_query, norm_cols.values(), n=1, cutoff=0.8)
+        if close:
+            for col, norm_col in norm_cols.items():
+                if norm_col == close[0]:
+                    return col
+        return None
+
+    def _find_best_value_match(query_val, col_values):
+        norm_query = _normalize(query_val)
+        norm_vals = [_normalize(v) for v in col_values]
+
+        for orig, normed in zip(col_values, norm_vals):
+            if norm_query == normed:
+                return orig
+        close = difflib.get_close_matches(norm_query, norm_vals, n=1, cutoff=0.8)
+        if close:
+            idx = norm_vals.index(close[0])
+            return col_values[idx]
+        return None
+
     def _classify_query(question, df):
         """Classify the query type for a DataFrame question."""
-        q = question.lower()
+        q = _normalize(question)
         if re.match(r"^\s*list all\b", q) or re.match(r"^\s*show all\b", q):
             return "list_all"
+        
         for col in df.columns:
-            if re.search(rf"\b{col}\b.*\b(is|=|equals|named|with|of|to)\b.*\b([\w@.\- ]+)", q):
+            norm_col = _normalize(col)
+            if re.search(rf"\b{norm_col}\b.*\b(is|=|equals|named|with|of|to)\b.*\b([\w@.\- ]+)", q):
                 return "filter_exact"
         if re.search(r"(contains|starts with|ends with|pattern)", q):
             return "filter_pattern"
@@ -176,18 +215,45 @@ async def retrieve_relevant_context(
         return "unknown"
 
     def _extract_column_value(question, df):
-        """Try to extract column and value for filtering."""
-        q = question.lower()
+        """Extract column and value for filtering, using normalization and fuzzy matching."""
+        q = _normalize(question)
         for col in df.columns:
-            m = re.search(rf"\b{col}\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
+            norm_col = _normalize(col)
+            m = re.search(rf"\b{norm_col}\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
             if m:
-                return col, m.group(2).strip()
+                candidate_val = m.group(2).strip()
+                col_data = df[col].dropna().astype(str).tolist()
+                best_val = _find_best_value_match(candidate_val, col_data)
+                return col, best_val if best_val is not None else candidate_val
+        m = re.search(r"\b([\w@.\- ]+)\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
+        if m:
+            candidate_col = m.group(1).strip()
+            candidate_val = m.group(3).strip()
+            best_col = _find_best_column_match(candidate_col, df.columns)
+            if best_col:
+                col_data = df[best_col].dropna().astype(str).tolist()
+                best_val = _find_best_value_match(candidate_val, col_data)
+                return best_col, best_val if best_val is not None else candidate_val
         return None, None
 
     def _extract_pattern(question, df):
-        m = re.search(r"(?:contains|starts with|ends with)\s+['\"]?([\w@.\- ]+)['\"]?", question, re.IGNORECASE)
+        q = _normalize(question)
+        m = re.search(r"(?:contains|starts with|ends with)\s+['\"]?([\w@.\- ]+)['\"]?", q, re.IGNORECASE)
         if m:
             return m.group(1).strip()
+        return None
+
+    def _extract_pattern_column(question, df):
+        q = _normalize(question)
+        for col in df.columns:
+            norm_col = _normalize(col)
+            if re.search(rf"\b{norm_col}\b", q):
+                return col
+        words = re.findall(r"\b[\w@.\- ]+\b", q)
+        for word in words:
+            best_col = _find_best_column_match(word, df.columns)
+            if best_col:
+                return best_col
         return None
 
     def _extract_aggregate(question, df):
@@ -200,19 +266,27 @@ async def retrieve_relevant_context(
             "min": "min",
             "max": "max"
         }
+        q = _normalize(question)
         for agg_word, agg_func in agg_map.items():
-            m = re.search(rf"{agg_word}\s+(?:of\s+)?([\w_]+)", question, re.IGNORECASE)
+            m = re.search(rf"{agg_word}\s+(?:of\s+)?([\w_ ]+)", q, re.IGNORECASE)
             if m:
-                col = m.group(1)
-                if col in df.columns:
-                    return agg_func, col
+                candidate_col = m.group(1).strip()
+                best_col = _find_best_column_match(candidate_col, df.columns)
+                if best_col:
+                    return agg_func, best_col
         return None, None
 
     def _extract_row_identifier(question, df):
-        for col in df.columns:
-            m = re.search(rf"(?:info for|details for|row for|record for)\s+['\"]?([\w@.\- ]+)['\"]?", question, re.IGNORECASE)
-            if m:
-                return col, m.group(1).strip()
+        q = _normalize(question)
+        m = re.search(r"(?:info for|details for|row for|record for)\s+['\"]?([\w@.\- ]+)['\"]?", q, re.IGNORECASE)
+        if m:
+            val = m.group(1).strip()
+            # Try to find which column this value matches best
+            for col in df.columns:
+                col_data = df[col].dropna().astype(str).tolist()
+                best_val = _find_best_value_match(val, col_data)
+                if best_val is not None:
+                    return col, best_val
         return None, None
 
     if tabular_file_keys:
@@ -242,23 +316,39 @@ async def retrieve_relevant_context(
                     elif query_type == "filter_exact":
                         col, val = _extract_column_value(question_text, df)
                         if col and val:
-                            filtered = df[df[col].astype(str).str.lower() == val.lower()]
-                            output = filtered
-                            desc = f"Filtered rows where {col} == '{val}' (case-insensitive):"
+                            mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(val))
+                            if not mask.any():
+                                col_data = df[col].dropna().astype(str).tolist()
+                                best_val = _find_best_value_match(val, col_data)
+                                if best_val is not None:
+                                    mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(best_val))
+                            filtered = df[mask]
+                            if filtered.empty:
+                                output = df.head(10)
+                                desc = f"No exact or fuzzy match for {col} = '{val}'; showing sample rows:"
+                            else:
+                                output = filtered
+                                desc = f"Filtered rows where {col} == '{val}' (normalized/fuzzy):"
                         else:
                             output = df.head(10)
                             desc = "Could not infer filter; showing sample rows:"
                     elif query_type == "filter_pattern":
                         pattern = _extract_pattern(question_text, df)
-                        col = None
-                        for c in df.columns:
-                            if re.search(rf"\b{c}\b", question_text, re.IGNORECASE):
-                                col = c
-                                break
+                        col = _extract_pattern_column(question_text, df)
                         if col and pattern:
-                            filtered = df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
-                            output = filtered
-                            desc = f"Rows where {col} contains '{pattern}':"
+                            norm_pattern = _normalize(pattern)
+                            def match_func(x):
+                                try:
+                                    return norm_pattern in _normalize(x)
+                                except Exception:
+                                    return False
+                            filtered = df[df[col].astype(str).apply(match_func)]
+                            if filtered.empty:
+                                output = df.head(10)
+                                desc = f"No rows where {col} contains '{pattern}' (normalized); showing sample rows:"
+                            else:
+                                output = filtered
+                                desc = f"Rows where {col} contains '{pattern}':"
                         else:
                             output = df.head(10)
                             desc = "Could not infer pattern/column; showing sample rows:"
@@ -282,9 +372,19 @@ async def retrieve_relevant_context(
                     elif query_type == "full_row":
                         col, val = _extract_row_identifier(question_text, df)
                         if col and val:
-                            filtered = df[df[col].astype(str).str.lower() == val.lower()]
-                            output = filtered
-                            desc = f"Full row for {col} == '{val}':"
+                            mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(val))
+                            if not mask.any():
+                                col_data = df[col].dropna().astype(str).tolist()
+                                best_val = _find_best_value_match(val, col_data)
+                                if best_val is not None:
+                                    mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(best_val))
+                            filtered = df[mask]
+                            if filtered.empty:
+                                output = df.head(10)
+                                desc = f"No full row found for {col} = '{val}'; showing sample rows:"
+                            else:
+                                output = filtered
+                                desc = f"Full row for {col} == '{val}':"
                         else:
                             output = df.head(10)
                             desc = "Could not infer row identifier; showing sample rows:"
