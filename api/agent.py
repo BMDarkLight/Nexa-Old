@@ -162,7 +162,8 @@ async def retrieve_relevant_context(
                 df = None
         return df
 
-    def _normalize(s):
+    # Normalization/fuzzy helpers: only normalize queries, not DataFrame values
+    def _normalize_query(s):
         if not isinstance(s, str):
             s = str(s)
         s = unicodedata.normalize("NFKC", s)
@@ -171,8 +172,9 @@ async def retrieve_relevant_context(
         return s
 
     def _find_best_column_match(query_col, df_columns):
-        norm_query = _normalize(query_col)
-        norm_cols = {col: _normalize(col) for col in df_columns}
+        # Only normalize the query_col; keep df_columns as-is for LLM reporting
+        norm_query = _normalize_query(query_col)
+        norm_cols = {col: _normalize_query(col) for col in df_columns}
         for col, norm_col in norm_cols.items():
             if norm_query == norm_col:
                 return col
@@ -184,9 +186,9 @@ async def retrieve_relevant_context(
         return None
 
     def _find_best_value_match(query_val, col_values):
-        norm_query = _normalize(query_val)
-        norm_vals = [_normalize(v) for v in col_values]
-
+        # Only normalize the query_val; keep col_values as-is for LLM reporting
+        norm_query = _normalize_query(query_val)
+        norm_vals = [_normalize_query(v) for v in col_values]
         for orig, normed in zip(col_values, norm_vals):
             if norm_query == normed:
                 return orig
@@ -198,12 +200,11 @@ async def retrieve_relevant_context(
 
     def _classify_query(question, df):
         """Classify the query type for a DataFrame question."""
-        q = _normalize(question)
+        q = _normalize_query(question)
         if re.match(r"^\s*list all\b", q) or re.match(r"^\s*show all\b", q):
             return "list_all"
-        
         for col in df.columns:
-            norm_col = _normalize(col)
+            norm_col = _normalize_query(col)
             if re.search(rf"\b{norm_col}\b.*\b(is|=|equals|named|with|of|to)\b.*\b([\w@.\- ]+)", q):
                 return "filter_exact"
         if re.search(r"(contains|starts with|ends with|pattern)", q):
@@ -215,16 +216,18 @@ async def retrieve_relevant_context(
         return "unknown"
 
     def _extract_column_value(question, df):
-        """Extract column and value for filtering, using normalization and fuzzy matching."""
-        q = _normalize(question)
+        """Extract column and value for filtering, using normalization/fuzzy on query only."""
+        q = _normalize_query(question)
+        # Try pattern: <col> is/equals/with <val>
         for col in df.columns:
-            norm_col = _normalize(col)
+            norm_col = _normalize_query(col)
             m = re.search(rf"\b{norm_col}\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
             if m:
                 candidate_val = m.group(2).strip()
                 col_data = df[col].dropna().astype(str).tolist()
                 best_val = _find_best_value_match(candidate_val, col_data)
                 return col, best_val if best_val is not None else candidate_val
+        # Try pattern: <col> ... <val>
         m = re.search(r"\b([\w@.\- ]+)\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
         if m:
             candidate_col = m.group(1).strip()
@@ -237,16 +240,16 @@ async def retrieve_relevant_context(
         return None, None
 
     def _extract_pattern(question, df):
-        q = _normalize(question)
+        q = _normalize_query(question)
         m = re.search(r"(?:contains|starts with|ends with)\s+['\"]?([\w@.\- ]+)['\"]?", q, re.IGNORECASE)
         if m:
             return m.group(1).strip()
         return None
 
     def _extract_pattern_column(question, df):
-        q = _normalize(question)
+        q = _normalize_query(question)
         for col in df.columns:
-            norm_col = _normalize(col)
+            norm_col = _normalize_query(col)
             if re.search(rf"\b{norm_col}\b", q):
                 return col
         words = re.findall(r"\b[\w@.\- ]+\b", q)
@@ -266,7 +269,7 @@ async def retrieve_relevant_context(
             "min": "min",
             "max": "max"
         }
-        q = _normalize(question)
+        q = _normalize_query(question)
         for agg_word, agg_func in agg_map.items():
             m = re.search(rf"{agg_word}\s+(?:of\s+)?([\w_ ]+)", q, re.IGNORECASE)
             if m:
@@ -277,7 +280,7 @@ async def retrieve_relevant_context(
         return None, None
 
     def _extract_row_identifier(question, df):
-        q = _normalize(question)
+        q = _normalize_query(question)
         m = re.search(r"(?:info for|details for|row for|record for)\s+['\"]?([\w@.\- ]+)['\"]?", q, re.IGNORECASE)
         if m:
             val = m.group(1).strip()
@@ -309,6 +312,7 @@ async def retrieve_relevant_context(
                     logger.info("Classified query as %r for table %s", query_type, filename)
                     output = None
                     desc = ""
+                    filter_failed = False
                     if query_type == "list_all":
                         MAX_ROWS = 20
                         output = df.head(MAX_ROWS)
@@ -316,41 +320,46 @@ async def retrieve_relevant_context(
                     elif query_type == "filter_exact":
                         col, val = _extract_column_value(question_text, df)
                         if col and val:
-                            mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(val))
+                            # Only normalize/fuzzy-match the query value, not the DataFrame values
+                            mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(val))
                             if not mask.any():
                                 col_data = df[col].dropna().astype(str).tolist()
                                 best_val = _find_best_value_match(val, col_data)
                                 if best_val is not None:
-                                    mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(best_val))
+                                    mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(best_val))
                             filtered = df[mask]
                             if filtered.empty:
-                                output = df.head(10)
+                                filter_failed = True
+                                output = df.head(20)
                                 desc = f"No exact or fuzzy match for {col} = '{val}'; showing sample rows:"
                             else:
                                 output = filtered
-                                desc = f"Filtered rows where {col} == '{val}' (normalized/fuzzy):"
+                                desc = f"Filtered rows where {col} == '{val}' (query normalized/fuzzy):"
                         else:
-                            output = df.head(10)
+                            filter_failed = True
+                            output = df.head(20)
                             desc = "Could not infer filter; showing sample rows:"
                     elif query_type == "filter_pattern":
                         pattern = _extract_pattern(question_text, df)
                         col = _extract_pattern_column(question_text, df)
                         if col and pattern:
-                            norm_pattern = _normalize(pattern)
+                            norm_pattern = _normalize_query(pattern)
                             def match_func(x):
                                 try:
-                                    return norm_pattern in _normalize(x)
+                                    return norm_pattern in _normalize_query(x)
                                 except Exception:
                                     return False
                             filtered = df[df[col].astype(str).apply(match_func)]
                             if filtered.empty:
-                                output = df.head(10)
-                                desc = f"No rows where {col} contains '{pattern}' (normalized); showing sample rows:"
+                                filter_failed = True
+                                output = df.head(20)
+                                desc = f"No rows where {col} contains '{pattern}' (query normalized); showing sample rows:"
                             else:
                                 output = filtered
                                 desc = f"Rows where {col} contains '{pattern}':"
                         else:
-                            output = df.head(10)
+                            filter_failed = True
+                            output = df.head(20)
                             desc = "Could not infer pattern/column; showing sample rows:"
                     elif query_type == "aggregate":
                         agg_func, col = _extract_aggregate(question_text, df)
@@ -367,48 +376,55 @@ async def retrieve_relevant_context(
                                 output = pd.DataFrame({f"{agg_func}_{col}": [result]})
                                 desc = f"{agg_func.title()} of {col}:"
                         else:
+                            filter_failed = True
                             output = df.describe(include='all').T
                             desc = "Could not infer aggregation; showing describe():"
                     elif query_type == "full_row":
                         col, val = _extract_row_identifier(question_text, df)
                         if col and val:
-                            mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(val))
+                            mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(val))
                             if not mask.any():
                                 col_data = df[col].dropna().astype(str).tolist()
                                 best_val = _find_best_value_match(val, col_data)
                                 if best_val is not None:
-                                    mask = df[col].astype(str).apply(lambda x: _normalize(x) == _normalize(best_val))
+                                    mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(best_val))
                             filtered = df[mask]
                             if filtered.empty:
-                                output = df.head(10)
+                                filter_failed = True
+                                output = df.head(20)
                                 desc = f"No full row found for {col} = '{val}'; showing sample rows:"
                             else:
                                 output = filtered
                                 desc = f"Full row for {col} == '{val}':"
                         else:
-                            output = df.head(10)
+                            filter_failed = True
+                            output = df.head(20)
                             desc = "Could not infer row identifier; showing sample rows:"
                     else:
-                        output = df.head(10)
+                        filter_failed = False
+                        output = df.head(20)
                         desc = "Sample of data (unclassified query):"
 
-                    if output is not None and not output.empty:
-                        N_HEAD = min(5, len(output))
-                        sample_csv = output.head(N_HEAD).to_csv(index=False)
+                    # If filter failed or output is empty, provide the full DataFrame/sample to LLM for reasoning
+                    if output is None or output.empty:
+                        filter_failed = True
+                        output = df.head(20)
+                        desc = "No matching rows found; showing sample rows:"
+
+                    N_HEAD = min(5, len(output))
+                    sample_csv = output.head(N_HEAD).to_csv(index=False)
+                    try:
                         summary_stats = output.describe(include='all').to_string()
-                        schema_summary = (
-                            f"Table '{filename}':\n"
-                            f"Columns: {', '.join(df.columns)}\n"
-                            f"Column types: {', '.join(str(df[col].dtype) for col in df.columns)}\n"
-                            f"{desc}\n"
-                            f"Sample of {len(output)} rows (showing first {N_HEAD} rows):\n{sample_csv}\n"
-                            f"Summary statistics (of result rows):\n{summary_stats}\n"
-                        )
-                    else:
-                        schema_summary = (
-                            f"Table '{filename}':\n"
-                            f"No matching rows found for the query.\n"
-                        )
+                    except Exception:
+                        summary_stats = ""
+                    schema_summary = (
+                        f"Table '{filename}':\n"
+                        f"Columns: {', '.join(df.columns)}\n"
+                        f"Column types: {', '.join(str(df[col].dtype) for col in df.columns)}\n"
+                        f"{desc}\n"
+                        f"Sample of {len(output)} rows (showing first {N_HEAD} rows):\n{sample_csv}\n"
+                        f"Summary statistics (of result rows):\n{summary_stats}\n"
+                    )
 
                     llm_prompt = (
                         f"You are given a table from the organization's knowledge base.\n"
@@ -420,6 +436,10 @@ async def retrieve_relevant_context(
                         f"Do not describe your reasoning steps. "
                         f"Only provide a concise, factual answer based on the provided rows or summary statistics. "
                         f"If the answer cannot be determined from the provided data, explicitly state that the knowledge base does not contain the information."
+                        + (
+                            "\nNote: The filtered subset for your query was empty or could not be determined, so you are given a sample of the full table. Please reason using the available data."
+                            if filter_failed else ""
+                        )
                     )
                     try:
                         llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
