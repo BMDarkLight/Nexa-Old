@@ -119,24 +119,32 @@ async def retrieve_relevant_context(
         except Exception as exc:
             logger.error("Exception processing doc #%d: %s", idx, exc)
 
-    for file_key in tabular_file_keys:
-        logger.info("Processing tabular file: file_key=%r", file_key)
-        tabular_docs = [doc for doc in context_docs if doc.get("file_key") == file_key and doc.get("is_tabular", False)]
-        df = None
-        filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
+    # --- FAST TABULAR CONTEXT RETRIEVAL ---
+    import functools
+    from concurrent.futures import ThreadPoolExecutor
+
+    # LRU cache for DataFrame loading
+    @functools.lru_cache(maxsize=32)
+    def _cached_load_df(file_key, data_json):
+        try:
+            if data_json:
+                return pd.read_json(data_json, orient="split")
+        except Exception:
+            return None
+        return None
+
+    async def _async_load_df(file_key, tabular_docs):
         data_json = None
         for doc in tabular_docs:
             if "data_json" in doc and doc["data_json"]:
                 data_json = doc["data_json"]
                 break
         if data_json:
-            try:
-                df = pd.read_json(data_json, orient="split")
-                logger.debug("Loaded DataFrame from data_json for file: %s, shape=%s", filename, df.shape)
-            except Exception as exc:
-                logger.error("Failed to load DataFrame from data_json for file_key %r: %s", file_key, exc)
-                df = None
-        if df is None and tabular_docs:
+            loop = asyncio.get_running_loop()
+            # Use threadpool for sync Pandas I/O
+            df = await loop.run_in_executor(None, _cached_load_df, file_key, data_json)
+        else:
+            # Try to reconstruct from rows
             rows = []
             header = None
             for doc in tabular_docs:
@@ -150,94 +158,64 @@ async def retrieve_relevant_context(
                             values = [v.strip() for v in doc["text"].split(",")]
                             row_dict = dict(zip(header, values))
                             rows.append(row_dict)
-                    except Exception as exc:
-                        logger.warning("Failed to parse row from text in tabular doc: %s", exc)
+                    except Exception:
+                        continue
             if rows:
+                df = pd.DataFrame(rows)
+            else:
+                df = None
+        return df
+
+    if tabular_file_keys:
+        logger.info("Loading tabular DataFrames for %d file_keys...", len(tabular_file_keys))
+        tabular_file_key_list = list(tabular_file_keys)
+        tabular_docs_map = {
+            file_key: [doc for doc in context_docs if doc.get("file_key") == file_key and doc.get("is_tabular", False)]
+            for file_key in tabular_file_key_list
+        }
+
+        dfs = await asyncio.gather(*[
+            _async_load_df(file_key, tabular_docs_map[file_key]) for file_key in tabular_file_key_list
+        ])
+
+        for file_key, df in zip(tabular_file_key_list, dfs):
+            filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
+            if df is not None and not df.empty:
+                MAX_ROWS = 500
+                if len(df) > MAX_ROWS:
+                    logger.warning("DataFrame for %s too large (%d rows); sampling %d rows.", filename, len(df), MAX_ROWS)
+                    df = df.sample(MAX_ROWS, random_state=42)
+
+                schema_lines = []
+                schema_lines.append(f"Columns: {', '.join(df.columns)}")
+                schema_lines.append(f"Column types: {', '.join(str(df[col].dtype) for col in df.columns)}")
+                N_HEAD = min(5, len(df))
+                head_csv = df.head(N_HEAD).to_csv(index=False)
+                summary_stats = df.describe(include='all').to_string()
+                schema_summary = (
+                    f"Table '{filename}':\n"
+                    f"{schema_lines[0]}\n"
+                    f"{schema_lines[1]}\n"
+                    f"First {N_HEAD} rows:\n{head_csv}\n"
+                    f"Summary statistics:\n{summary_stats}\n"
+                )
+                llm_prompt = (
+                    f"You are given a table from the organization's knowledge base.\n"
+                    f"{schema_summary}\n"
+                    f"User's question: {question_text}\n"
+                    f"Based only on the provided schema, sample rows, and summary statistics above, answer the user's question about the table. "
+                    f"If the answer cannot be determined from the provided data, say so."
+                )
                 try:
-                    df = pd.DataFrame(rows)
-                    logger.debug("Constructed DataFrame from rows for file: %s, shape=%s", filename, df.shape)
+                    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+                    response = await llm.ainvoke([HumanMessage(content=llm_prompt)])
+                    answer = response.content if hasattr(response, "content") else str(response)
                 except Exception as exc:
-                    logger.error("Failed to construct DataFrame from rows for file_key %r: %s", file_key, exc)
-                    df = None
-        if df is not None and not df.empty:
-            try:
-                logger.info("Invoking PythonAstREPLTool agent on tabular file: %s", filename)
-                csv_tool = PythonAstREPLTool()
-                csv_tool.name = "csv_analyzer"
-                csv_tool.description = (
-                    "Executes Python code to analyze structured tabular data. "
-                    "Use it to compute, summarize, or visualize data accurately from the given DataFrame."
-                )
-
-                llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-                analysis_agent = initialize_agent(
-                    tools=[csv_tool],
-                    llm=llm,
-                    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-                    verbose=False,
-                    handle_parsing_errors=True,
-                )
-
-                instruction_text = (
-                    "You are analyzing a structured DataFrame called 'df' that contains the full dataset loaded from the organization's knowledge base. "
-                    "You have full access to the DataFrame in memory and can execute real Python code to explore and analyze it.\n\n"
-                    "When you begin, use Python commands like:\n"
-                    "  - df.head() to view the first few rows\n"
-                    "  - df.info() to inspect columns and data types\n"
-                    "  - df.describe() to summarize numeric columns\n"
-                    "  - df['column_name'].value_counts() or df.groupby('column_name') for grouping and aggregation\n"
-                    "You should always execute Python code using the variable 'df' to compute accurate answers.\n\n"
-                )
-
-                df_token_estimate = len(df.to_csv(index=False).split())
-
-                MAX_ROWS_INLINE = 20
-                if len(df) <= MAX_ROWS_INLINE and df_token_estimate < 2000:
-                    tabular_prompt = (
-                        instruction_text +
-                        f"The CSV is small, here are all rows:\n{df.to_csv(index=False)}\n\n"
-                        f"User's question: {question_text}\n"
-                        "Write and run Python code to explore, summarize, and answer based on the full DataFrame."
-                    )
-                else:
-                    tabular_prompt = (
-                        instruction_text +
-                        "The CSV file is large, so do NOT attempt to view all data at once.\n"
-                        "Use Python code like df.head(), df.info(), or df.describe() to explore and analyze it.\n\n"
-                        f"User's question: {question_text}\n"
-                        "Write and execute Python code using the 'df' variable to compute or summarize the answer precisely."
-                    )
-
-                pd.set_option("display.max_rows", 20)
-                pd.set_option("display.max_columns", 10)
-                pd.set_option("display.width", 120)
-
-                if len(df) > 500:
-                    logger.warning("DataFrame too large (%d rows); sampling 500 rows for analysis.", len(df))
-                    df = df.sample(500, random_state=42)
-
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        agent_response = await asyncio.wait_for(
-                            analysis_agent.ainvoke(tabular_prompt),
-                            timeout=20
-                        )
-                    else:
-                        agent_response = loop.run_until_complete(asyncio.wait_for(
-                            analysis_agent.ainvoke(tabular_prompt),
-                            timeout=20
-                        ))
-                except asyncio.TimeoutError:
-                    agent_response = "⚠️ Timed out while executing REPL tool; the dataset might be too large."
-                except Exception as exc:
-                    agent_response = f"⚠️ Error running REPL analysis: {exc}"
-                logger.info("PythonAstREPLTool agent completed for file: %s", filename)
-                tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
-            except Exception as exc:
-                logger.error(f"Failed to process tabular data with PythonAstREPLTool for file_key {file_key}:\n{traceback.format_exc()}")
-        else:
-            logger.warning("No valid DataFrame found for tabular file: %s", filename)
+                    logger.error("Failed LLM call for tabular file %s: %s", filename, exc)
+                    answer = f"⚠️ Error analyzing table '{filename}': {exc}"
+                tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{answer}")
+            else:
+                logger.warning("No valid DataFrame found for tabular file: %s", filename)
 
     selected_contexts = []
     if text_chunks_scored:
