@@ -2,17 +2,19 @@ from langgraph.prebuilt import create_react_agent
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
-from langchain_experimental.agents.agent_toolkits.pandas.base import create_pandas_dataframe_agent
-from langchain_experimental.tools import PythonAstREPLTool
 from langchain.agents import initialize_agent, AgentType
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Dict, Any
 from bson import ObjectId
 
 import pandas as pd
 import logging
-import traceback
-import tempfile
-import os
+import functools
+import re
+import asyncio
+import unicodedata
+import unidecode
+import difflib
 
 from api.embed import similarity, embed_question
 from api.schemas.agents import convert_messages_to_dict
@@ -51,7 +53,7 @@ def _clean_tool_name(name: str, prefix: str) -> Dict[str, str]:
     llm_label = name.strip()
     return {"tool_name": tool_name, "llm_label": llm_label}
 
-def retrieve_relevant_context(
+async def retrieve_relevant_context(
     question: str | list,
     context_docs: List[Dict[str, Any]],
     top_n: int = 3,
@@ -120,24 +122,25 @@ def retrieve_relevant_context(
         except Exception as exc:
             logger.error("Exception processing doc #%d: %s", idx, exc)
 
-    for file_key in tabular_file_keys:
-        logger.info("Processing tabular file: file_key=%r", file_key)
-        tabular_docs = [doc for doc in context_docs if doc.get("file_key") == file_key and doc.get("is_tabular", False)]
-        df = None
-        filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
+    @functools.lru_cache(maxsize=32)
+    def _cached_load_df(file_key, data_json):
+        try:
+            if data_json:
+                return pd.read_json(data_json, orient="split")
+        except Exception:
+            return None
+        return None
+
+    async def _async_load_df(file_key, tabular_docs):
         data_json = None
         for doc in tabular_docs:
             if "data_json" in doc and doc["data_json"]:
                 data_json = doc["data_json"]
                 break
         if data_json:
-            try:
-                df = pd.read_json(data_json, orient="split")
-                logger.debug("Loaded DataFrame from data_json for file: %s, shape=%s", filename, df.shape)
-            except Exception as exc:
-                logger.error("Failed to load DataFrame from data_json for file_key %r: %s", file_key, exc)
-                df = None
-        if df is None and tabular_docs:
+            loop = asyncio.get_running_loop()
+            df = await loop.run_in_executor(None, _cached_load_df, file_key, data_json)
+        else:
             rows = []
             header = None
             for doc in tabular_docs:
@@ -151,70 +154,306 @@ def retrieve_relevant_context(
                             values = [v.strip() for v in doc["text"].split(",")]
                             row_dict = dict(zip(header, values))
                             rows.append(row_dict)
-                    except Exception as exc:
-                        logger.warning("Failed to parse row from text in tabular doc: %s", exc)
+                    except Exception:
+                        continue
             if rows:
+                df = pd.DataFrame(rows)
+            else:
+                df = None
+        return df
+
+    # Normalization/fuzzy helpers: only normalize queries, not DataFrame values
+    def _normalize_query(s):
+        if not isinstance(s, str):
+            s = str(s)
+        s = unicodedata.normalize("NFKC", s)
+        s = s.casefold()
+        s = unidecode.unidecode(s)
+        return s
+
+    def _find_best_column_match(query_col, df_columns):
+        # Only normalize the query_col; keep df_columns as-is for LLM reporting
+        norm_query = _normalize_query(query_col)
+        norm_cols = {col: _normalize_query(col) for col in df_columns}
+        for col, norm_col in norm_cols.items():
+            if norm_query == norm_col:
+                return col
+        close = difflib.get_close_matches(norm_query, norm_cols.values(), n=1, cutoff=0.8)
+        if close:
+            for col, norm_col in norm_cols.items():
+                if norm_col == close[0]:
+                    return col
+        return None
+
+    def _find_best_value_match(query_val, col_values):
+        # Only normalize the query_val; keep col_values as-is for LLM reporting
+        norm_query = _normalize_query(query_val)
+        norm_vals = [_normalize_query(v) for v in col_values]
+        for orig, normed in zip(col_values, norm_vals):
+            if norm_query == normed:
+                return orig
+        close = difflib.get_close_matches(norm_query, norm_vals, n=1, cutoff=0.8)
+        if close:
+            idx = norm_vals.index(close[0])
+            return col_values[idx]
+        return None
+
+    def _classify_query(question, df):
+        """Classify the query type for a DataFrame question."""
+        q = _normalize_query(question)
+        if re.match(r"^\s*list all\b", q) or re.match(r"^\s*show all\b", q):
+            return "list_all"
+        for col in df.columns:
+            norm_col = _normalize_query(col)
+            if re.search(rf"\b{norm_col}\b.*\b(is|=|equals|named|with|of|to)\b.*\b([\w@.\- ]+)", q):
+                return "filter_exact"
+        if re.search(r"(contains|starts with|ends with|pattern)", q):
+            return "filter_pattern"
+        if re.search(r"\b(average|mean|sum|total|count|min|max)\b", q):
+            return "aggregate"
+        if re.search(r"(info for|details for|row for|record for)", q):
+            return "full_row"
+        return "unknown"
+
+    def _extract_column_value(question, df):
+        """Extract column and value for filtering, using normalization/fuzzy on query only."""
+        q = _normalize_query(question)
+        # Try pattern: <col> is/equals/with <val>
+        for col in df.columns:
+            norm_col = _normalize_query(col)
+            m = re.search(rf"\b{norm_col}\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
+            if m:
+                candidate_val = m.group(2).strip()
+                col_data = df[col].dropna().astype(str).tolist()
+                best_val = _find_best_value_match(candidate_val, col_data)
+                return col, best_val if best_val is not None else candidate_val
+        # Try pattern: <col> ... <val>
+        m = re.search(r"\b([\w@.\- ]+)\b.*\b(is|=|equals|named|with|of|to)\b\s*['\"]?([\w@.\- ]+)['\"]?", q)
+        if m:
+            candidate_col = m.group(1).strip()
+            candidate_val = m.group(3).strip()
+            best_col = _find_best_column_match(candidate_col, df.columns)
+            if best_col:
+                col_data = df[best_col].dropna().astype(str).tolist()
+                best_val = _find_best_value_match(candidate_val, col_data)
+                return best_col, best_val if best_val is not None else candidate_val
+        return None, None
+
+    def _extract_pattern(question, df):
+        q = _normalize_query(question)
+        m = re.search(r"(?:contains|starts with|ends with)\s+['\"]?([\w@.\- ]+)['\"]?", q, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        return None
+
+    def _extract_pattern_column(question, df):
+        q = _normalize_query(question)
+        for col in df.columns:
+            norm_col = _normalize_query(col)
+            if re.search(rf"\b{norm_col}\b", q):
+                return col
+        words = re.findall(r"\b[\w@.\- ]+\b", q)
+        for word in words:
+            best_col = _find_best_column_match(word, df.columns)
+            if best_col:
+                return best_col
+        return None
+
+    def _extract_aggregate(question, df):
+        agg_map = {
+            "average": "mean",
+            "mean": "mean",
+            "sum": "sum",
+            "total": "sum",
+            "count": "count",
+            "min": "min",
+            "max": "max"
+        }
+        q = _normalize_query(question)
+        for agg_word, agg_func in agg_map.items():
+            m = re.search(rf"{agg_word}\s+(?:of\s+)?([\w_ ]+)", q, re.IGNORECASE)
+            if m:
+                candidate_col = m.group(1).strip()
+                best_col = _find_best_column_match(candidate_col, df.columns)
+                if best_col:
+                    return agg_func, best_col
+        return None, None
+
+    def _extract_row_identifier(question, df):
+        q = _normalize_query(question)
+        m = re.search(r"(?:info for|details for|row for|record for)\s+['\"]?([\w@.\- ]+)['\"]?", q, re.IGNORECASE)
+        if m:
+            val = m.group(1).strip()
+            # Try to find which column this value matches best
+            for col in df.columns:
+                col_data = df[col].dropna().astype(str).tolist()
+                best_val = _find_best_value_match(val, col_data)
+                if best_val is not None:
+                    return col, best_val
+        return None, None
+
+    if tabular_file_keys:
+        logger.info("Loading tabular DataFrames for %d file_keys...", len(tabular_file_keys))
+        tabular_file_key_list = list(tabular_file_keys)
+        tabular_docs_map = {
+            file_key: [doc for doc in context_docs if doc.get("file_key") == file_key and doc.get("is_tabular", False)]
+            for file_key in tabular_file_key_list
+        }
+
+        dfs = await asyncio.gather(*[
+            _async_load_df(file_key, tabular_docs_map[file_key]) for file_key in tabular_file_key_list
+        ])
+
+        for file_key, df in zip(tabular_file_key_list, dfs):
+            filename = "_".join(file_key.split("_")[1:]) if file_key else "unknown"
+            if df is not None and not df.empty:
                 try:
-                    df = pd.DataFrame(rows)
-                    logger.debug("Constructed DataFrame from rows for file: %s, shape=%s", filename, df.shape)
+                    query_type = _classify_query(question_text, df)
+                    logger.info("Classified query as %r for table %s", query_type, filename)
+                    output = None
+                    desc = ""
+                    filter_failed = False
+                    if query_type == "list_all":
+                        MAX_ROWS = 20
+                        output = df.head(MAX_ROWS)
+                        desc = f"List of all records (showing first {MAX_ROWS} rows):"
+                    elif query_type == "filter_exact":
+                        col, val = _extract_column_value(question_text, df)
+                        if col and val:
+                            # Only normalize/fuzzy-match the query value, not the DataFrame values
+                            mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(val))
+                            if not mask.any():
+                                col_data = df[col].dropna().astype(str).tolist()
+                                best_val = _find_best_value_match(val, col_data)
+                                if best_val is not None:
+                                    mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(best_val))
+                            filtered = df[mask]
+                            if filtered.empty:
+                                filter_failed = True
+                                output = df.head(20)
+                                desc = f"No exact or fuzzy match for {col} = '{val}'; showing sample rows:"
+                            else:
+                                output = filtered
+                                desc = f"Filtered rows where {col} == '{val}' (query normalized/fuzzy):"
+                        else:
+                            filter_failed = True
+                            output = df.head(20)
+                            desc = "Could not infer filter; showing sample rows:"
+                    elif query_type == "filter_pattern":
+                        pattern = _extract_pattern(question_text, df)
+                        col = _extract_pattern_column(question_text, df)
+                        if col and pattern:
+                            norm_pattern = _normalize_query(pattern)
+                            def match_func(x):
+                                try:
+                                    return norm_pattern in _normalize_query(x)
+                                except Exception:
+                                    return False
+                            filtered = df[df[col].astype(str).apply(match_func)]
+                            if filtered.empty:
+                                filter_failed = True
+                                output = df.head(20)
+                                desc = f"No rows where {col} contains '{pattern}' (query normalized); showing sample rows:"
+                            else:
+                                output = filtered
+                                desc = f"Rows where {col} contains '{pattern}':"
+                        else:
+                            filter_failed = True
+                            output = df.head(20)
+                            desc = "Could not infer pattern/column; showing sample rows:"
+                    elif query_type == "aggregate":
+                        agg_func, col = _extract_aggregate(question_text, df)
+                        if agg_func and col:
+                            if agg_func == "count":
+                                result = df[col].count()
+                                output = pd.DataFrame({f"count_{col}": [result]})
+                                desc = f"Count of {col}:"
+                            else:
+                                try:
+                                    result = getattr(df[col], agg_func)()
+                                except Exception:
+                                    result = None
+                                output = pd.DataFrame({f"{agg_func}_{col}": [result]})
+                                desc = f"{agg_func.title()} of {col}:"
+                        else:
+                            filter_failed = True
+                            output = df.describe(include='all').T
+                            desc = "Could not infer aggregation; showing describe():"
+                    elif query_type == "full_row":
+                        col, val = _extract_row_identifier(question_text, df)
+                        if col and val:
+                            mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(val))
+                            if not mask.any():
+                                col_data = df[col].dropna().astype(str).tolist()
+                                best_val = _find_best_value_match(val, col_data)
+                                if best_val is not None:
+                                    mask = df[col].astype(str).apply(lambda x: _normalize_query(x) == _normalize_query(best_val))
+                            filtered = df[mask]
+                            if filtered.empty:
+                                filter_failed = True
+                                output = df.head(20)
+                                desc = f"No full row found for {col} = '{val}'; showing sample rows:"
+                            else:
+                                output = filtered
+                                desc = f"Full row for {col} == '{val}':"
+                        else:
+                            filter_failed = True
+                            output = df.head(20)
+                            desc = "Could not infer row identifier; showing sample rows:"
+                    else:
+                        filter_failed = False
+                        output = df.head(20)
+                        desc = "Sample of data (unclassified query):"
+
+                    # If filter failed or output is empty, provide the full DataFrame/sample to LLM for reasoning
+                    if output is None or output.empty:
+                        filter_failed = True
+                        output = df.head(20)
+                        desc = "No matching rows found; showing sample rows:"
+
+                    N_HEAD = min(5, len(output))
+                    sample_csv = output.head(N_HEAD).to_csv(index=False)
+                    try:
+                        summary_stats = output.describe(include='all').to_string()
+                    except Exception:
+                        summary_stats = ""
+                    schema_summary = (
+                        f"Table '{filename}':\n"
+                        f"Columns: {', '.join(df.columns)}\n"
+                        f"Column types: {', '.join(str(df[col].dtype) for col in df.columns)}\n"
+                        f"{desc}\n"
+                        f"Sample of {len(output)} rows (showing first {N_HEAD} rows):\n{sample_csv}\n"
+                        f"Summary statistics (of result rows):\n{summary_stats}\n"
+                    )
+
+                    llm_prompt = (
+                        f"You are given a table from the organization's knowledge base.\n"
+                        f"{schema_summary}\n"
+                        f"User's question: {question_text}\n"
+                        f"Answer the user's question using only the data provided above. "
+                        f"Do not invent any information. "
+                        f"Do not apologize, ask the user to wait, or add any procedural commentary. "
+                        f"Do not describe your reasoning steps. "
+                        f"Only provide a concise, factual answer based on the provided rows or summary statistics. "
+                        f"If the answer cannot be determined from the provided data, explicitly state that the knowledge base does not contain the information."
+                        + (
+                            "\nNote: The filtered subset for your query was empty or could not be determined, so you are given a sample of the full table. Please reason using the available data."
+                            if filter_failed else ""
+                        )
+                    )
+                    try:
+                        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+                        response = await llm.ainvoke([HumanMessage(content=llm_prompt)])
+                        answer = response.content if hasattr(response, "content") else str(response)
+                    except Exception as exc:
+                        logger.error("Failed LLM call for tabular file %s: %s", filename, exc)
+                        answer = f"⚠️ Error analyzing table '{filename}': {exc}"
+                    tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{answer}")
                 except Exception as exc:
-                    logger.error("Failed to construct DataFrame from rows for file_key %r: %s", file_key, exc)
-                    df = None
-        if df is not None and not df.empty:
-            try:
-                logger.info("Invoking PythonAstREPLTool agent on tabular file: %s", filename)
-                csv_tool = PythonAstREPLTool()
-                csv_tool.name = "csv_analyzer"
-                csv_tool.description = (
-                    "Executes Python code to analyze structured tabular data. "
-                    "Use it to compute, summarize, or visualize data accurately from the given DataFrame."
-                )
-
-                llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-                analysis_agent = initialize_agent(
-                    tools=[csv_tool],
-                    llm=llm,
-                    agent=AgentType.OPENAI_FUNCTIONS,
-                    verbose=False,
-                    handle_parsing_errors=True,
-                )
-
-                instruction_text = (
-                    "You are analyzing a structured DataFrame called 'df' that contains the full dataset loaded from the organization's knowledge base. "
-                    "You have full access to the DataFrame in memory and can execute real Python code to explore and analyze it.\n\n"
-                    "When you begin, use Python commands like:\n"
-                    "  - df.head() to view the first few rows\n"
-                    "  - df.info() to inspect columns and data types\n"
-                    "  - df.describe() to summarize numeric columns\n"
-                    "  - df['column_name'].value_counts() or df.groupby('column_name') for grouping and aggregation\n"
-                    "You should always execute Python code using the variable 'df' to compute accurate answers.\n\n"
-                )
-
-                question_text_token_estimate = len(question_text.split())
-                df_token_estimate = len(df.to_csv(index=False).split())
-                instruction_token_estimate = len(instruction_text.split())
-
-                if instruction_token_estimate + question_text_token_estimate + df_token_estimate < 8000:
-                    tabular_prompt = (
-                        instruction_text +
-                        f"The entire CSV is provided below:\n{df.to_csv(index=False)}\n\n"
-                        f"User's question: {question_text}\n"
-                        "Write and run Python code to explore, summarize, and answer based on the full DataFrame."
-                    )
-                else:
-                    tabular_prompt = (
-                        instruction_text +
-                        f"User's question: {question_text}\n"
-                        "Do NOT rely on example rows for computation; run Python code to explore and summarize the full DataFrame variable 'df'."
-                    )
-
-                agent_response = analysis_agent.run(tabular_prompt)
-                logger.info("PythonAstREPLTool agent completed for file: %s", filename)
-                tabular_context_outputs.append(f"📊 Table context from '{filename}':\n{agent_response}")
-            except Exception as exc:
-                logger.error(f"Failed to process tabular data with PythonAstREPLTool for file_key {file_key}:\n{traceback.format_exc()}")
-        else:
-            logger.warning("No valid DataFrame found for tabular file: %s", filename)
+                    logger.error("Error during DataFrame query-classification/execution for %s: %s", filename, exc)
+                    tabular_context_outputs.append(f"⚠️ Error handling table '{filename}': {exc}")
+            else:
+                logger.warning("No valid DataFrame found for tabular file: %s", filename)
 
     selected_contexts = []
     if text_chunks_scored:
@@ -379,7 +618,7 @@ async def get_agent_graph(
 
             context_text += f"📄 Document: '{filename}'\n{entry_doc.get('text', '')}\n{entry_exp}\n"
 
-        relevant_context = retrieve_relevant_context(question, context_docs)
+        relevant_context = await retrieve_relevant_context(question, context_docs)
 
         system_prompt = f"""
             You are an AI agent built by user in Nexa AI platform. Nexa AI is a platform for building AI agents with specialized tools and connectors for organizations to use.

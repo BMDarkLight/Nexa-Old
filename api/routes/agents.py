@@ -214,7 +214,9 @@ async def ask(
                 SystemMessage(
                     "You are a title generator. You receive the user's chat history in the chatbot and generate a short title based on it. "
                     "The title should represent what is going on in the chat, the title shouldn't be flashy or trendy, just helpful and straight to the point. "
-                    "Generate the title in the same language as the chat history."
+                    "The title should be should and representetive, less than 2 words and 15 to 10 characters. "
+                    "Generate the title in the same language as the chat history. "
+                    "Just return the title as answer, nothing else. "
                 ),
             ]
             for entry in recent_history:
