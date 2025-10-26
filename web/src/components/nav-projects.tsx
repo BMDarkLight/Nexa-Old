@@ -26,8 +26,9 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import Swal from "sweetalert2";
+import { set } from "react-hook-form";
 
-export function NavProjects({
+export function  NavProjects({
   projects,
 }: {
   projects: {
@@ -44,6 +45,8 @@ export function NavProjects({
   const [openWallet, setOpenWallet] = useState(false);
 
   const [usagePercent, setUsagePercent] = useState<number>(0);
+  const [usage, setUsage] = useState<number>(0);
+  const [quota, setQuota] = useState<number>(0);
 
   const fetchUsage = async () => {
     try {
@@ -52,8 +55,7 @@ export function NavProjects({
       if (!token) return;
 
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4"}:${
-          process.env.NEXT_PUBLIC_API_PORT ?? "8000"
+        `${process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4"}:${process.env.NEXT_PUBLIC_API_PORT ?? "8000"
         }/organization/usage`,
         {
           headers: {
@@ -69,6 +71,8 @@ export function NavProjects({
 
       if (quota > 0) {
         const percent = Math.min((usage / quota) * 100, 100);
+        setUsage(usage);
+        setQuota(quota);
         setUsagePercent(percent);
       } else {
         setUsagePercent(0);
@@ -86,23 +90,23 @@ export function NavProjects({
   }, [openWallet]);
 
   const handleLogout = async () => {
-     const result = await Swal.fire({
-      title : "خروج از حساب" ,
+    const result = await Swal.fire({
+      title: "خروج از حساب",
       text: "آیا مطمئن هستید که می‌خواهید از حساب کاربری خود خارج شوید؟",
       showCancelButton: true,
       cancelButtonText: "انصراف",
       confirmButtonText: "خروج",
-      reverseButtons : true ,
-      customClass : {
-        popup : "swal-rtl" ,
-        title : "swal-title" , 
-        confirmButton : "swal-confirm-btn swal-half-btn" , 
-        cancelButton : "swal-cancel-btn swal-half-btn" ,
-        htmlContainer : "swal-text" , 
-        actions : "swal-container"
+      reverseButtons: true,
+      customClass: {
+        popup: "swal-rtl",
+        title: "swal-title",
+        confirmButton: "swal-confirm-btn swal-half-btn",
+        cancelButton: "swal-cancel-btn swal-half-btn",
+        htmlContainer: "swal-text",
+        actions: "swal-container"
       }
     })
-    if(result.isConfirmed){
+    if (result.isConfirmed) {
       Cookie.remove("auth_token")
       Cookie.remove("token_type")
       window.location.href = "/login"
@@ -169,7 +173,10 @@ export function NavProjects({
             </div>
 
             <div>
-              <h4 className="text-sm font-semibold text-slate-900 mb-2">اعتبار باقی‌مانده</h4>
+              <div className="flex justify-between">
+                <h4 className="text-sm font-semibold text-slate-900 mb-2">اعتبار باقی‌مانده</h4>
+                <p className="text-[#A1A1AA] text-[14px] "> توکن {quota} / <span className="text-primary">{usage}</span></p>
+              </div>
               <Progress value={usagePercent} className="h-2" />
             </div>
           </div>
@@ -178,3 +185,4 @@ export function NavProjects({
     </>
   );
 }
+

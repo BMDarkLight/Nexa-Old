@@ -13,7 +13,7 @@ import ReturnBtn from "./ReturnBtn";
 import { useParams, useRouter } from "next/navigation";
 import Swal from "sweetalert2";
 
-const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.65";
 const End_point = "/agents";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
@@ -25,9 +25,15 @@ interface ContextEntry {
   created_at: string;
 }
 
+interface UploadingFile {
+  name: string;
+  isUploading: boolean;
+}
+
 export default function UploadAgent() {
   const [files, setFiles] = useState<File[]>([]);
   const [contextEntries, setContextEntries] = useState<ContextEntry[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [nextLoading, setNextLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -101,10 +107,18 @@ export default function UploadAgent() {
     setFiles(selectedFiles);
     setLoading(true);
 
-    const prevCount = contextEntries.length;
+    // فوراً فایل‌های در حال آپلود را به جدول اضافه می‌کنیم
+    const newUploadingFiles: UploadingFile[] = selectedFiles.map(file => ({
+      name: file.name,
+      isUploading: true
+    }));
+    setUploadingFiles(prev => [...prev, ...newUploadingFiles]);
+
+    let uploadToastId: string | number | undefined;
+    
     try {
       for (const file of selectedFiles) {
-        toast.info("در حال آپلود فایل CSV ...", {
+        uploadToastId = toast.info("در حال آپلود فایل CSV ...", {
           icon: null,
           style: { background: "#2563EB", color: "#fff" },
         });
@@ -122,14 +136,28 @@ export default function UploadAgent() {
         );
 
         if (!res.ok) {
+          // حذف toast در حال آپلود در صورت خطا
+          if (uploadToastId) {
+            toast.dismiss(uploadToastId);
+          }
           toast.error("خطا در آپلود فایل CSV", {
             icon: null,
             style: { background: "#DC2626", color: "#fff" },
           });
+          // حذف فایل ناموفق از لیست آپلود
+          setUploadingFiles(prev => prev.filter(f => f.name !== file.name));
           return;
         }
+
+        // حذف فایل موفق از لیست آپلود
+        setUploadingFiles(prev => prev.filter(f => f.name !== file.name));
       }
 
+      // حذف toast در حال آپلود قبل از نمایش toast موفقیت
+      if (uploadToastId) {
+        toast.dismiss(uploadToastId);
+      }
+      
       toast.success("فایل با موفقیت آپلود شد و درحال پردازش است. لطفا مرحله بعد بروید.", {
         icon: null,
         style: { background: "#059669", color: "#fff" },
@@ -138,10 +166,16 @@ export default function UploadAgent() {
 
       await fetchContext();
     } catch (err) {
+      // حذف toast در حال آپلود در صورت خطای عمومی
+      if (uploadToastId) {
+        toast.dismiss(uploadToastId);
+      }
       toast.error("آپلود فایل با خطا مواجه شد", {
         icon: null,
         style: { background: "#DC2626", color: "#fff" },
       });
+      // پاک کردن تمام فایل‌های در حال آپلود در صورت خطا
+      setUploadingFiles([]);
     } finally {
       setLoading(false);
       e.target.value = "";
@@ -210,11 +244,12 @@ export default function UploadAgent() {
         </div>
 
         <div className="mt-6 border rounded-md overflow-hidden">
-          {contextEntries.length > 0 ? (
+          {(contextEntries.length > 0 || uploadingFiles.length > 0) ? (
             <Table>
               <TableBody>
+                {/* فایل‌های آپلود شده */}
                 {contextEntries.map((file, index) => (
-                  <TableRow key={index} className="relative">
+                  <TableRow key={`uploaded-${index}`} className="relative">
                     <TableCell className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <img
@@ -228,6 +263,25 @@ export default function UploadAgent() {
                         agent_id={agent_id as string}
                         context_id={file.context_id}
                       />
+                    </TableCell>
+                  </TableRow>
+                ))}
+                
+                {/* فایل‌های در حال آپلود */}
+                {uploadingFiles.map((file, index) => (
+                  <TableRow key={`uploading-${index}`} className="relative">
+                    <TableCell className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src="/Squad/image/mc-file-spreadsheet.png"
+                          alt=""
+                          className="w-6 h-6 opacity-50"
+                        />
+                        <span className="text-muted-foreground">{file.name}</span>
+                      </div>
+                      <div className="flex items-center">
+                        <Spinner className="w-4 h-4" />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

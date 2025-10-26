@@ -9,7 +9,7 @@ import Cookie from "js-cookie";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 
 const API_Base_Url =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.65";
 const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 
 export default function ManageConnector() {

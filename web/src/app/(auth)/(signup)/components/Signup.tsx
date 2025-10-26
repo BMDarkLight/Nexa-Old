@@ -12,7 +12,7 @@ import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
 
 const API_Base_Url: string =
-  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+  process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.65";
 const End_point: string = "/signup";
 const API_PORT: string = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
 

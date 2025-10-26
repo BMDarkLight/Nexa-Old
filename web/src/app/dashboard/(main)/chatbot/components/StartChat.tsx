@@ -37,7 +37,7 @@ export default function StartChat() {
   const router = useRouter();
 
   const API_Base_Url =
-    process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+    process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.65";
   const End_point_ask = "/ask";
   const End_point_agents = "/agents";
   const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";

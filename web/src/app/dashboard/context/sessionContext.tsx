@@ -4,7 +4,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import Cookie from "js-cookie";
 
-const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.65:8000";
 const End_point = "/sessions";
 
 interface ChatMessage {

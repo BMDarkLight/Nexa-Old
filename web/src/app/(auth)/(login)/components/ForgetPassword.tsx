@@ -41,7 +41,7 @@ export default function ForgetPasswordCom() {
     mode: "onTouched",
   });
   const API_Base_Url =
-    process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4";
+    process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.65";
   const End_point = "/forgot-password";
   const API_PORT = process.env.NEXT_PUBLIC_API_PORT ?? "8000";
   const onSubmit = async (data: TFormValue) => {
