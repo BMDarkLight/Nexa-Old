@@ -2,6 +2,12 @@
 
 Gen-AI for Organizations. Streamline all workflows across messenger, workspaces, and organizational systems in one place, and make them smart using AI.
 
+## What is this?
+
+This is the source code of old Nexa codebase's latest version.
+
+This codebase is not now active in the Nexa AI and is under MIT Open Source License, feel free to use the codebase.
+
 ---
 
 ## Project Overview
